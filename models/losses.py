@@ -5,13 +5,12 @@ import torch.nn.functional as F
 class SupervisedSimCLRLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
-    def __init__(self, device, temperature=0.07, contrast_mode='all',
+    def __init__(self, temperature=0.07, contrast_mode='all',
                  base_temperature=0.07):
         super(SupervisedSimCLRLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
-        self.device = device
 
     def forward(self, features, labels=None, mask=None):
         """Compute loss for model. If both `labels` and `mask` are None,
@@ -33,18 +32,20 @@ class SupervisedSimCLRLoss(nn.Module):
         if len(features.shape) > 3:
             features = features.view(features.shape[0], features.shape[1], -1)
 
+        device = features.device
+
         batch_size = features.shape[0]
         if labels is not None and mask is not None:
             raise ValueError('Cannot define both `labels` and `mask`')
         elif labels is None and mask is None:
-            mask = torch.eye(batch_size, dtype=torch.float32).to(self.device)
+            mask = torch.eye(batch_size, dtype=torch.float32).to(device)
         elif labels is not None:
             labels = labels.contiguous().view(-1, 1)
             if labels.shape[0] != batch_size:
                 raise ValueError('Num of labels does not match num of features')
-            mask = torch.eq(labels, labels.T).float().to(self.device)
+            mask = torch.eq(labels, labels.T).float().to(device)
         else:
-            mask = mask.float().to(self.device)
+            mask = mask.float().to(device)
 
         contrast_count = features.shape[1]
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
@@ -71,9 +72,9 @@ class SupervisedSimCLRLoss(nn.Module):
         logits_mask = torch.scatter(
             torch.ones_like(mask),
             1,
-            torch.arange(batch_size * anchor_count).view(-1, 1).to(self.device),
+            torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
             0
-        ).to(self.device)
+        ).to(device)
         mask = mask * logits_mask
 
         # compute log_prob
