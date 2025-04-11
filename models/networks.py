@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torchvision.models import resnet50, resnet18 
+from torchvision.models import resnet50, resnet18, efficientnet_b0 
 from .resnet_wider import resnet50x1, resnet50x2, resnet50x4
 
 activations = {
@@ -56,7 +56,7 @@ class CustomResNet(nn.Module):
         else:
             print(f"Variant {variant} not recognized. Using resnet50")
             self.model = resnet50()
-        
+
         dim_resnet = self.model.fc.in_features
         self.model.fc = MLP(dim_resnet,fc_hidden,fc_out,**kwargs)
 
@@ -95,3 +95,20 @@ class CustomPretrainedResNet(nn.Module):
 
     def forward(self,x):
         return self.output_mlp(self.model(x))
+    
+
+class CustomEfficientNet(nn.Module):
+    def __init__(self,fc_hidden,fc_out,**kwargs):
+        # loads efficientnet_b0 then replaces the last fc layer with a user-specificed mlp
+        # fc_dims specifies the dimensions 
+        super().__init__()
+
+        self.model = efficientnet_b0()
+        
+        dim_resnet = self.model.classifier[1].in_features
+        self.model.classifier = MLP(dim_resnet,fc_hidden,fc_out,**kwargs)
+
+    def forward(self,x):
+        return self.model(x)
+    
+
