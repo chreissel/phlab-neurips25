@@ -2,15 +2,21 @@ import torch
 import torch.nn as nn
 from torchvision.models import resnet50, resnet18 
 from .resnet_wider import resnet50x1, resnet50x2, resnet50x4
+from .parT import ParticleTransformer
+import yaml
 
 activations = {
     "relu": nn.ReLU(),
     "sigmoid": nn.Sigmoid(),
     "tanh": nn.Tanh(),
+    "elu": nn.ELU(),
+    "leaky_relu": nn.LeakyReLU(),
+    "gelu": nn.GELU(),
+    "tanh": nn.Tanh()
 }
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.0, internal_activation='relu', output_activation=None, input_activation=None):
+    def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.0, activation='relu', output_activation=None, input_activation=None):
         super().__init__()
         layers = []
         if input_activation is not None:
@@ -19,7 +25,7 @@ class MLP(nn.Module):
         
         for hidden_dim in hidden_dims:
             layers.append(nn.Linear(current_dim, hidden_dim))
-            layers.append(activations[internal_activation])
+            layers.append(activations[activation])
             if dropout > 0:
                 layers.append(nn.Dropout(dropout))
             current_dim = hidden_dim
@@ -95,3 +101,15 @@ class CustomPretrainedResNet(nn.Module):
 
     def forward(self,x):
         return self.output_mlp(self.model(x))
+    
+
+class ParticleTransformerModel(nn.Module):
+    def __init__(self,**kwargs):
+        super().__init__()
+        self.model = ParticleTransformer(**kwargs)
+
+    def forward(self,x):
+        features = x['pf_features'].float()
+        vectors = x['pf_vectors'].float()
+        mask = x['pf_mask'].float()
+        return self.model(features,v=vectors,mask=mask)
