@@ -1,6 +1,8 @@
 import torch 
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, TensorDataset
+from torchvision.datasets import VisionDataset
+
 
 class viewGenerator:
     """

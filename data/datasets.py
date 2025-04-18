@@ -5,6 +5,9 @@ import lightning as pl
 from . import data_utils as dutils
 from torchvision.transforms import v2
 from torchvision.datasets import Imagenette
+from .customImagenette import TensorImagenette
+import glob
+from .jetclass.dataset import SimpleIterDataset
 
 class GenericDataModule(pl.LightningDataModule):
     def __init__(self,batch_size=512,num_workers=4,pin_memory=False):
@@ -58,21 +61,31 @@ class PairwiseSumDataset(GenericDataModule):
         return loader
     
 class ImagenetteDataset(GenericDataModule):
-    def __init__(self,image_width,**kwargs):
+    def __init__(self,image_width,sup_simclr=False,**kwargs):
         super().__init__(**kwargs)
         
-        # augmentations from original simCLR paper on ImageNet
-        self.simclr_augment = v2.Compose([
-            v2.PILToTensor(), # operations are more efficient on tensors
-            v2.RandomResizedCrop(image_width),
-            v2.RandomHorizontalFlip(p=0.5),
-            v2.RandomApply([v2.ColorJitter(0.8,0.8,0.8,0.2)],p=0.8),
-            v2.RandomGrayscale(p=0.2),
-            v2.RandomApply([v2.GaussianBlur(kernel_size=23)],p=0.5),
-            v2.ToDtype(torch.float32,scale=True)
-        ])
-        # view generator for getting two augmentations per image
-        self.simclr_views = dutils.viewGenerator(self.simclr_augment,2)
+        if sup_simclr:
+            self.simclr_augment = v2.Compose([
+                v2.PILToTensor(), # operations are more efficient on tensors
+                #v2.RandomResizedCrop(image_width),
+                v2.Resize(256),
+                v2.CenterCrop(image_width),
+                v2.ToDtype(torch.float32,scale=True)
+            ])
+            self.simclr_views = self.simclr_augment
+        else:
+            # augmentations from original simCLR paper on ImageNet
+            self.simclr_augment = v2.Compose([
+                v2.PILToTensor(), # operations are more efficient on tensors
+                v2.RandomResizedCrop(image_width),
+                v2.RandomHorizontalFlip(p=0.5),
+                v2.RandomApply([v2.ColorJitter(0.8,0.8,0.8,0.2)],p=0.8),
+                v2.RandomGrayscale(p=0.2),
+                v2.RandomApply([v2.GaussianBlur(kernel_size=23)],p=0.5),
+                v2.ToDtype(torch.float32,scale=True)
+            ])
+            # view generator for getting two augmentations per image
+            self.simclr_views = dutils.viewGenerator(self.simclr_augment,2)
 
         # augmentations for ImageNet test evaluation - just resize and crop
         self.test_augment = v2.Compose([v2.PILToTensor(),
@@ -111,4 +124,213 @@ class ImagenetteDataset(GenericDataModule):
     def test_dataloader(self):
         loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
                             pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+class NoisyImagenetteDataset(GenericDataModule):
+    def __init__(self,image_width,eps=0.2,p=0.5,sup_simclr=False,**kwargs):
+        super().__init__(**kwargs)
+        
+        if sup_simclr:
+            self.simclr_augment = v2.Compose([
+                v2.PILToTensor(), # operations are more efficient on tensors
+                v2.Resize(256),
+                v2.CenterCrop(image_width),
+                v2.ToDtype(torch.float32,scale=True),
+                v2.RandomApply([v2.GaussianNoise(eps)],p=p)
+            ])
+            self.simclr_views = self.simclr_augment
+        else:
+            # augmentations from original simCLR paper on ImageNet
+            self.simclr_augment = v2.Compose([
+                v2.PILToTensor(), # operations are more efficient on tensors
+                v2.RandomResizedCrop(image_width),
+                v2.RandomHorizontalFlip(p=0.5),
+                v2.RandomApply([v2.ColorJitter(0.8,0.8,0.8,0.2)],p=0.8),
+                v2.RandomGrayscale(p=0.2),
+                v2.RandomApply([v2.GaussianBlur(kernel_size=23)],p=0.5),
+                v2.ToDtype(torch.float32,scale=True)
+            ])
+            # view generator for getting two augmentations per image
+            self.simclr_views = dutils.viewGenerator(self.simclr_augment,2)
+
+        # augmentations for ImageNet test evaluation - just resize and crop
+        self.test_augment = v2.Compose([v2.PILToTensor(),
+                                        v2.Resize(256),
+                                        v2.CenterCrop(image_width),
+                                        v2.ToDtype(torch.float32,scale=True),
+                                        v2.RandomApply([v2.GaussianNoise(eps)],p=p)
+                                        ])
+        
+        # Imagenette datasets
+        self.train_dataset = Imagenette(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/imagenette/",
+                           split='train',
+                           size='full',
+                           download=False,
+                           transform=self.simclr_views)
+        self.val_dataset = Imagenette(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/imagenette/",
+                                split='val',
+                                size='full',
+                                download=False,
+                                transform=self.simclr_views)
+        self.test_dataset = Imagenette(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/imagenette/",
+                                split='val',
+                                size='full',
+                                download=False,
+                                transform=self.test_augment)
+        
+    def train_dataloader(self):
+        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def val_dataloader(self):
+        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def test_dataloader(self):
+        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+
+class TensorImagenetteDataset(GenericDataModule):
+    def __init__(self,image_width,preload=True,**kwargs):
+        super().__init__(**kwargs)
+        
+        # augmentations from original simCLR paper on ImageNet
+        self.simclr_augment = v2.Compose([
+            v2.RandomResizedCrop(image_width),
+            v2.RandomHorizontalFlip(p=0.5),
+            v2.RandomApply([v2.ColorJitter(0.8,0.8,0.8,0.2)],p=0.8),
+            v2.RandomGrayscale(p=0.2),
+            v2.RandomApply([v2.GaussianBlur(kernel_size=23)],p=0.5),
+            v2.ToDtype(torch.float32,scale=True)
+        ])
+        # view generator for getting two augmentations per image
+        self.simclr_views = dutils.viewGenerator(self.simclr_augment,2)
+
+        # augmentations for ImageNet test evaluation - just resize and crop
+        self.test_augment = v2.Compose([v2.Resize(256),
+                                        v2.CenterCrop(image_width),
+                                        v2.ToDtype(torch.float32,scale=True)
+                                        ])
+        
+        # Imagenette datasets
+        self.train_dataset = TensorImagenette(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/imagenette_tensors/",
+                           split='train',
+                           size='full',
+                           download=False,
+                           transform=self.simclr_views,
+                           preload=preload)
+        self.val_dataset = TensorImagenette(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/imagenette_tensors/",
+                                split='val',
+                                size='full',
+                                download=False,
+                                transform=self.simclr_views,
+                                preload=preload)
+        self.test_dataset = TensorImagenette(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/imagenette_tensors/",
+                                split='val',
+                                size='full',
+                                download=False,
+                                transform=self.test_augment,
+                                preload=preload)
+        
+    def train_dataloader(self):
+        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def val_dataloader(self):
+        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def test_dataloader(self):
+        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+class JetClassDataset(GenericDataModule):
+    def __init__(self,classes,input_config,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.train_dir = "/n/holystore01/LABS/iaifi_lab/Lab/sambt/JetClass/train_100M/"
+        self.val_dir = "/n/holystore01/LABS/iaifi_lab/Lab/sambt/JetClass/val_5M/"
+        self.test_dir = "/n/holystore01/LABS/iaifi_lab/Lab/sambt/JetClass/test_20M/"
+        
+        self.all_classes = ["qcd","wqq","zqq","ttbar","hbb"]
+        self.all_class_fileHeaders = {
+            "qcd":"ZJetsToNuNu",
+            "wqq":"WToQQ",
+            "zqq":"ZToQQ",
+            "ttbar":"TTBar",
+            "hbb":"HToBB"
+        }
+
+        assert set(classes).issubset(self.all_classes)
+        self.classes = classes
+        self.input_config = input_config
+        
+        self.train_file_dict = {c:glob.glob(f"{self.train_dir}/{self.all_class_fileHeaders[c]}_*.root") for c in self.classes}
+        self.val_file_dict = {c:glob.glob(f"{self.val_dir}/{self.all_class_fileHeaders[c]}_*.root") for c in self.classes}
+        self.test_file_dict = {c:glob.glob(f"{self.test_dir}/{self.all_class_fileHeaders[c]}_*.root") for c in self.classes}
+
+    def train_dataloader(self):
+        train_dataset = SimpleIterDataset(
+            self.train_file_dict,
+            self.input_config,
+            for_training=True,
+            extra_selection=None,
+            fetch_by_files=False,
+            fetch_step=0.01,
+            file_fraction=1,
+            infinity_mode=False,
+            in_memory=False,
+            remake_weights=True,
+            load_range_and_fraction=((0,1),1),
+            name='train',
+            async_load=False
+        )
+        loader = DataLoader(train_dataset,batch_size=self.batch_size,
+                            pin_memory=self.pin_memory,num_workers=self.num_workers)
+        return loader
+        
+    def val_dataloader(self):
+        val_dataset = SimpleIterDataset(
+            self.val_file_dict,
+            self.input_config,
+            for_training=True,
+            extra_selection=None,
+            fetch_by_files=False,
+            fetch_step=0.01,
+            file_fraction=1,
+            infinity_mode=False,
+            in_memory=False,
+            remake_weights=True,
+            load_range_and_fraction=((0,1),1),
+            name='val',
+            async_load=False
+        )
+        loader = DataLoader(val_dataset,batch_size=self.batch_size,
+                            pin_memory=self.pin_memory,num_workers=self.num_workers)
+        return loader
+
+    def test_dataloader(self):
+        test_dataset = SimpleIterDataset(
+            self.test_file_dict,
+            self.input_config,
+            for_training=False,
+            extra_selection=None,
+            fetch_by_files=False,
+            fetch_step=0.01,
+            file_fraction=1,
+            infinity_mode=False,
+            in_memory=False,
+            remake_weights=True,
+            load_range_and_fraction=((0,1),1),
+            name='val',
+            async_load=False
+        )
+        loader = DataLoader(test_dataset,batch_size=self.batch_size,
+                            pin_memory=self.pin_memory,num_workers=self.num_workers)
         return loader
