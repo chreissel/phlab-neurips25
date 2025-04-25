@@ -22,6 +22,7 @@ class SimCLRModel(pl.LightningModule):
         self.classifier = classifier
         self.lambda_classifier = lambda_classifier
         self.val_outputs = []
+        #print(self.encoder)
 
         if pretrain_ckpt is not None:
             self.load_state_dict(torch.load(pretrain_ckpt)['state_dict'])

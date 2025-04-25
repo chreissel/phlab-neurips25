@@ -1,0 +1,48 @@
+import torch
+import torch.nn as nn
+import numpy as np
+from torch.utils.data import Dataset, DataLoader, TensorDataset
+from . import data_utils as dutils
+from torchvision.transforms import v2
+from tqdm import tqdm
+
+class CIFAR5MDataset(Dataset):
+    def __init__(self,resnet_type,chunks,ranges,grayscale=False,
+                 data_dir="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/cifar10_diffusion/",
+                 **kwargs):
+        super().__init__(**kwargs)
+        assert len(chunks) == len(ranges)
+        self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale,from_pil=False)
+        self.data_dir = data_dir
+        self.data = []
+        self.labels = []
+        for c,rg in zip(chunks,ranges):
+            with np.load(f"{self.data_dir}/cifar5m_part{c}.npz") as f:
+                N = len(f['Y'])
+                a = (int(rg[0]*N) if rg[0] <= 1 else rg[0]) if rg[0] is not None else None
+                b = (int(rg[1]*N) if rg[1] <= 1 else rg[1]) if rg[1] is not None else None
+                selection = slice(a,b)
+                self.data.append(torch.tensor(f['X'][selection].transpose(0,3,1,2)))
+                self.labels.append(f['Y'][selection])
+        self.data = torch.cat(self.data)
+        self.labels = np.concatenate(self.labels)
+        
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, index):
+        return self.transform(self.data[index]), self.labels[index]
+    
+    def subset(self,a,b):
+        return dutils.TransformDataset(self.transform,self.data[a:b],self.labels[a:b])
+    
+    def random_split(self,fraction):
+        N = len(self.data)
+        indices = np.arange(N)
+        np.random.shuffle(indices)
+        split = int(fraction*N)
+        return dutils.TransformDataset(self.transform,self.data[indices[:split]],self.labels[indices[:split]]), \
+               dutils.TransformDataset(self.transform,self.data[indices[split:]],self.labels[indices[split:]])
+    
+    def subselection(self,selection):
+        return dutils.TransformDataset(self.transform,self.data[torch.tensor(selection)],self.labels[np.array(selection)])

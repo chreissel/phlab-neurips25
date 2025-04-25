@@ -154,7 +154,7 @@ class _SimpleIter(object):
         self.restart()
 
     def restart(self):
-        print('=== Restarting DataIter %s, seed=%s ===' % (self._name, self._seed))
+        #print('=== Restarting DataIter %s, seed=%s ===' % (self._name, self._seed))
         # re-shuffle filelist and load range if for training
         filelist = copy.deepcopy(self.worker_filelist)
         if self._sampler_options['shuffle']:

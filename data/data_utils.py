@@ -1,8 +1,10 @@
 import torch 
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset, IterableDataset, ConcatDataset
 from torchvision.datasets import VisionDataset
-
+from torchvision.transforms import InterpolationMode
+import torchvision.transforms.v2 as v2
+import numpy as np
 
 class viewGenerator:
     """
@@ -33,6 +35,29 @@ class AugmentationDataset(Dataset):
         """
         data = self.base_dataset[index]
         return self.view_generator(data[0]), *data[1:]
+    
+class MultiIter:
+    def __init__(self,iterators,fractions):
+        self.iterators = iterators
+        self.fractions = fractions
+
+    def __next__(self):
+        i = np.random.choice(len(self.iterators), p=self.fractions)
+        return next(self.iterators[i])
+
+class InterleavedIterableDataset(IterableDataset):
+    def __init__(self,datasets,fractions):
+        """
+        Datasets is a list of datasets to interleave. Fractions is a list of fractions for each dataset.
+        The fractions should sum to 1.0.
+        """
+        assert len(datasets) == len(fractions)
+        self.datasets = datasets
+        self.fractions = fractions
+        self.iters = [iter(d) for d in self.datasets]
+
+    def __iter__(self):
+        return MultiIter(self.iters,self.fractions)
 
 ### Stuff for pairwise product sum toy dataset ###
 def pairwise_product_sum(x,normalize=True):
@@ -63,3 +88,75 @@ class permute_dims:
         aug = x.clone()
         aug[:self.dim] = aug[randperm]
         return aug
+    
+def ResNet50Transform(resnet_type,grayscale=False,from_pil=True):
+        assert resnet_type in ['resnet18','resnet50']
+        if resnet_type == 'resnet50':
+            resize_size = 232
+            crop_size = 224
+        elif resnet_type == 'resnet18':
+            resize_size = 256
+            crop_size = 224
+        else:
+            print("resnet type not recognized, using resnet18 values")
+            resize_size = 232
+            crop_size = 224
+        
+        transforms = [v2.Resize(resize_size,interpolation=InterpolationMode.BILINEAR,antialias=True),
+                      v2.CenterCrop(crop_size)]    
+        if from_pil:
+            transforms.append(v2.PILToTensor())
+        transforms.append(v2.ToDtype(torch.float32,scale=True))
+        if grayscale:
+            transforms.append(v2.Grayscale(num_output_channels=3))
+        transforms.append(v2.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]))
+
+        return v2.Compose(transforms)
+
+class TransformDataset(Dataset):
+    def __init__(self,transform,*args):
+        super().__init__()
+        self.transform = transform
+        self.dataset = args
+    
+    def __getitem__(self, index):
+        return self.transform(self.dataset[0][index]), *[d[index] for d in self.dataset[1:]]
+    
+    def __len__(self):
+        return len(self.dataset[0])
+    
+    def subset(self,a,b):
+        return TransformDataset(self.transform,*[d[slice(a,b)] for d in self.dataset])
+    
+    def random_split(self,fraction):
+        N = len(self.dataset[0])
+        indices = np.arange(N)
+        np.random.shuffle(indices)
+        split = int(fraction*N)
+        i1, i2 = indices[:split], indices[split:]
+        return TransformDataset(self.transform,*[d[i1] for d in self.dataset]), \
+               TransformDataset(self.transform,*[d[i2] for d in self.dataset])
+    
+class ConcatWithLabels(Dataset):
+    def __init__(self, datasets,labels):
+        assert len(datasets) == len(labels)
+        self._datasets = datasets
+        self._labels = [labels[i]*torch.ones(len(datasets[i])) for i in range(len(datasets))]
+        self._len = sum(len(dataset) for dataset in datasets)
+        self._indexes = []
+
+        # Calculate distribution of indexes in all datasets
+        cumulative_index = 0
+        for idx, dataset in enumerate(datasets):
+            next_cumulative_index = cumulative_index + len(dataset)
+            self._indexes.append((cumulative_index, next_cumulative_index, idx))
+            cumulative_index = next_cumulative_index
+
+    def __getitem__(self, index):
+        for start, stop, dataset_index in self._indexes:
+            if start <= index < stop:
+                dataset = self._datasets[dataset_index]
+                return dataset[index - start], self._labels[dataset_index][index - start]
+
+    def __len__(self) -> int:
+        return self._len

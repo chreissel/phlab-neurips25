@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
+import numpy as np
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 import lightning as pl
 from . import data_utils as dutils
 from torchvision.transforms import v2
-from torchvision.datasets import Imagenette
+from torchvision.datasets import Imagenette, CIFAR10
+from torchvision.models import ResNet50_Weights, ResNet18_Weights
 from .customImagenette import TensorImagenette
 import glob
 from .jetclass.dataset import SimpleIterDataset
@@ -15,6 +17,9 @@ class GenericDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.loader_kwargs = {"batch_size":self.batch_size,
+                              "num_workers":self.num_workers,
+                              "pin_memory":self.pin_memory}
     
 class PairwiseSumDataset(GenericDataModule):
     def __init__(self,dim,noise_dim,
@@ -46,18 +51,15 @@ class PairwiseSumDataset(GenericDataModule):
         return data,labels
     
     def train_dataloader(self):
-        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, 
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.train_dataset, shuffle=True, **self.loader_kwargs)
         return loader
     
     def val_dataloader(self):
-        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.val_dataset, shuffle=True, **self.loader_kwargs)
         return loader
     
     def test_dataloader(self):
-        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
         return loader
     
 class ImagenetteDataset(GenericDataModule):
@@ -112,18 +114,15 @@ class ImagenetteDataset(GenericDataModule):
                                 transform=self.test_augment)
         
     def train_dataloader(self):
-        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.train_dataset, shuffle=True, **self.loader_kwargs)
         return loader
     
     def val_dataloader(self):
-        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.val_dataset, shuffle=True, **self.loader_kwargs)
         return loader
     
     def test_dataloader(self):
-        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
         return loader
     
 class NoisyImagenetteDataset(GenericDataModule):
@@ -179,18 +178,15 @@ class NoisyImagenetteDataset(GenericDataModule):
                                 transform=self.test_augment)
         
     def train_dataloader(self):
-        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.train_dataset, shuffle=True, **self.loader_kwargs)
         return loader
     
     def val_dataloader(self):
-        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.val_dataset, shuffle=True, **self.loader_kwargs)
         return loader
     
     def test_dataloader(self):
-        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
         return loader
 
 class TensorImagenetteDataset(GenericDataModule):
@@ -236,18 +232,15 @@ class TensorImagenetteDataset(GenericDataModule):
                                 preload=preload)
         
     def train_dataloader(self):
-        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.train_dataset,shuffle=True, **self.loader_kwargs)
         return loader
     
     def val_dataloader(self):
-        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.val_dataset, shuffle=True, **self.loader_kwargs)
         return loader
     
     def test_dataloader(self):
-        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
         return loader
     
 class JetClassDataset(GenericDataModule):
@@ -289,10 +282,9 @@ class JetClassDataset(GenericDataModule):
             remake_weights=True,
             load_range_and_fraction=((0,1),1),
             name='train',
-            async_load=False
+            async_load=True
         )
-        loader = DataLoader(train_dataset,batch_size=self.batch_size,
-                            pin_memory=self.pin_memory,num_workers=self.num_workers)
+        loader = DataLoader(train_dataset,persistent_workers=True,**self.loader_kwargs)
         return loader
         
     def val_dataloader(self):
@@ -309,10 +301,9 @@ class JetClassDataset(GenericDataModule):
             remake_weights=True,
             load_range_and_fraction=((0,1),1),
             name='val',
-            async_load=False
+            async_load=True
         )
-        loader = DataLoader(val_dataset,batch_size=self.batch_size,
-                            pin_memory=self.pin_memory,num_workers=self.num_workers)
+        loader = DataLoader(val_dataset,persistent_workers=True,**self.loader_kwargs)
         return loader
 
     def test_dataloader(self):
@@ -329,8 +320,37 @@ class JetClassDataset(GenericDataModule):
             remake_weights=True,
             load_range_and_fraction=((0,1),1),
             name='val',
-            async_load=False
+            async_load=True
         )
-        loader = DataLoader(test_dataset,batch_size=self.batch_size,
-                            pin_memory=self.pin_memory,num_workers=self.num_workers)
+        loader = DataLoader(test_dataset,persistent_workers=True,**self.loader_kwargs)
+        return loader
+    
+
+class CIFAR10Dataset(GenericDataModule):
+    def __init__(self,resnet_type,grayscale=False,**kwargs):
+        super().__init__(**kwargs)
+        self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale)
+
+        self.train_dataset = CIFAR10(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/cifar10",
+                                    train=True,
+                                    download=False,
+                                    transform=self.transform)
+        self.val_dataset = CIFAR10(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/cifar10/",
+                                    train=False,
+                                    download=False,
+                                    transform=self.transform)
+        self.test_dataset = CIFAR10(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/cifar10/",
+                                    train=False,
+                                    download=False,
+                                    transform=self.transform)
+    def train_dataloader(self):
+        loader = DataLoader(self.train_dataset,shuffle=True, **self.loader_kwargs)
+        return loader
+    
+    def val_dataloader(self):
+        loader = DataLoader(self.val_dataset, shuffle=True, **self.loader_kwargs)
+        return loader
+    
+    def test_dataloader(self):
+        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
         return loader

@@ -14,7 +14,7 @@ def make_corner(x,labels,label_names=None,axwidth=2,return_fig=False):
 
     unique_labels = sorted(list(set(labels)))
     patches = []
-    xlims = [[np.quantile(x[:,i],0.01),np.quantile(x[:,i],0.99)] for i in range(N)]
+    xlims = [[np.quantile(x[:,i],0.00),np.quantile(x[:,i],1.0)] for i in range(N)]
     bins = [np.linspace(xlims[i][0],xlims[i][1],20) for i in range(N)]
     for il,label in enumerate(unique_labels):
         mask = labels==label
