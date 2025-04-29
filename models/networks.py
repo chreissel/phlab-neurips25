@@ -33,14 +33,27 @@ class MLP(nn.Module):
                 layers.append(nn.Dropout(dropout))
             current_dim = hidden_dim
         
-        layers.append(nn.Linear(current_dim, output_dim))
-        if output_activation is not None:
-            layers.append(activations[output_activation])
-        
+        #layers.append(nn.Linear(current_dim, output_dim))
+        #if output_activation is not None:
+        #    layers.append(activations[output_activation])
         self.network = nn.Sequential(*layers)
-    
+        self.last_layer = nn.Linear(current_dim, output_dim)
+        if output_activation is not None:
+            self.activation = activations[output_activation]
+        else:
+            self.activation = None
+            
     def forward(self, x):
-        return self.network(x)
+        out = self.network(x)
+        out = self.last_layer(out)
+        if self.activation is not None:
+            return self.activation(out)
+        return out
+    
+    def forward_ll(self, x):
+        out = self.network(x)
+        return out
+
     
 class DeepSetsEncoder(nn.Module):
     def __init__(self, phi, f):

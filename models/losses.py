@@ -47,6 +47,7 @@ class SupervisedSimCLRLoss(nn.Module):
         else:
             mask = mask.float().to(device)
 
+
         contrast_count = features.shape[1]
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
         if self.contrast_mode == 'one':
@@ -76,7 +77,7 @@ class SupervisedSimCLRLoss(nn.Module):
             0
         ).to(device)
         mask = mask * logits_mask
-
+        
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
