@@ -193,19 +193,19 @@ class ToyJetDataset(GenericDataModule):
         return loader
 
 class FlatDataset(GenericDataModule):
-    def __init__(self,ndisc,num_train,num_val,num_test,nrand=16,dilute=1.,
+    def __init__(self,nsigs,ndisc,num_train,num_val,num_test,nrand=16,
                  **kwargs):
         super().__init__(**kwargs)
-        self.dilute = dilute
-        self.ndisc = ndisc
-        self.nrand = nrand
+        self.nsigs  = nsigs
+        self.ndisc  = ndisc
+        self.nrand  = nrand
         self.num_train = num_train
         self.num_val   = num_val
         self.num_test  = num_test
         self.rand_matrix = self.random_rotation_matrix(ndisc+nrand)
         
         self.view_generator = dutils.viewGenerator(dutils.smear,2)
-        self.train_data, self.train_labels = self.generate(self.num_train,iDilute=False)
+        self.train_data, self.train_labels = self.generate(self.num_train)
         self.train_dataset = dutils.AugmentationDataset(TensorDataset(self.train_data, self.train_labels),self.view_generator)
         self.train_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
         
@@ -217,7 +217,7 @@ class FlatDataset(GenericDataModule):
         self.test_dataset = TensorDataset(self.test_data, self.test_labels)
         self.test_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
 
-        self.true_data, self.true_labels = self.generate(self.num_test,True,iDilute=False)
+        self.true_data, self.true_labels = self.generate(self.num_test,True)
         self.true_dataset = TensorDataset(self.true_data, self.true_labels)
         self.true_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
 
@@ -233,47 +233,36 @@ class FlatDataset(GenericDataModule):
         D = np.diag(np.sign(np.diag(R)))
         return Q @ D
 
-    def generate(self,n,iData=False,iMix=True,iDilute=False):
-        ndim=self.ndisc+self.nrand
-        s = np.empty((n,ndim))
-        b = np.empty((n,ndim))
-        c = np.empty((n,ndim))
-        #s[:,-1]=np.random.normal(0,0.5,n)
-        #b[:,-1]=np.random.uniform(-3,3,n)
+    def generate(self,n,iData=False,iMix=True):
+        #Generate a clear signal and background using same variables
+        #Add some random signals that use same discriminating variables
+        #for now, we just do many different traingle distributions
+        ndim = self.ndisc+self.nrand
+        data = np.empty((self.nsigs,n,ndim))
         for pVar in range(self.nrand):
-            s[:,pVar+self.ndisc]=np.random.uniform(0.0,1,n)
-            b[:,pVar+self.ndisc]=np.random.uniform(0.0,1,n)
-            c[:,pVar+self.ndisc]=np.random.uniform(0.0,1,n)
+            data[:,:,pVar+self.ndisc] = np.random.uniform(0.0,1,(self.nsigs,n))
         val=0.05
         if iData == 1:
             val=0.2
         for pVar in range(self.ndisc):
-            if iDilute:
-                nsig=int(self.dilute*n)
-                print("nsig",nsig,n)
-                s[0:nsig,pVar]=np.random.triangular(0.,1.-val, 1, nsig)
-                s[nsig:n,pVar]=np.random.triangular(0.,val, 1, n-nsig)
-            else:
-                s[:,pVar]=np.random.triangular(0.,1.-val, 1, n)
-            b[:,pVar]=np.random.triangular(0, val,    1, n)
-            c[:,pVar]=np.random.triangular(0, 0.5,    1, n)
+            data[0,:,pVar]=np.random.triangular(0.,1.-val, 1, n)
+            data[1,:,pVar]=np.random.triangular(0, val,    1, n)
+            for pSig in range(2,self.nsigs):
+                pMin  = np.random.uniform(0,0.5,n)
+                pMax  = np.random.uniform(0.5,1.0,n)
+                pPeak = np.random.uniform(pMin,pMax,n) 
+                data[pSig,:,pVar]=np.random.triangular(pMin,pPeak,pMax, n)
         if iMix:
             m=self.rand_matrix
-            ms=np.tile(m, (n, 1,1))
-            mb=np.tile(m, (n, 1,1))
-            mc=np.tile(m, (n, 1,1))
-            stmp = np.reshape(s[:,:],(n,1,ndim))
-            btmp = np.reshape(b[:,:],(n,1,ndim))
-            ctmp = np.reshape(c[:,:],(n,1,ndim))
-            stmp = np.matmul(stmp , ms)
-            btmp = np.matmul(btmp , mb)
-            ctmp = np.matmul(ctmp , mc)
-            s[:,:] = stmp[:,0,:]
-            b[:,:] = btmp[:,0,:]
-            c[:,:] = ctmp[:,0,:]
-        data   = torch.cat((torch.tensor(s),torch.tensor(b),torch.tensor(c)))
-        labels = torch.cat((torch.ones(len(s)),torch.zeros(len(b)),torch.ones(len(c))*2))
-        return data,labels
+            m=np.tile(m, (self.nsigs,n, 1,1))
+            dtmp = np.reshape(data,(self.nsigs,n,1,ndim))
+            stmp = np.matmul(dtmp , m)
+            data[:,:,:] = stmp[:,:,0,:]
+        data = data.reshape(self.nsigs*n,ndim)
+        labels = np.ones((self.nsigs*n,ndim))
+        for pArr in range(self.nsigs):
+            labels[pArr*self.nsigs:(pArr+1)*self.nsigs] *= pArr
+        return torch.tensor(data),torch.tensor(labels)
 
 
     def train_dataloader(self):
