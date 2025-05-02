@@ -292,7 +292,8 @@ def train_disc(inepochs,itrain,input_dim,last_dim=16,output_dim=3):
 #DE-SC0021943 #ECA
 #DE-SC001193 #Extra
 
-from torchmetrics import Accuracy
+from torchmetrics import Accuracy,AUROC
+
 def check_disc(itest_data,itest_labels,imodel):
     test_accuracy = Accuracy(task="binary", num_classes=2)#,top_k=2)
     labels=itest_labels.int()
@@ -301,7 +302,7 @@ def check_disc(itest_data,itest_labels,imodel):
     print(output.shape[1])
     if output.shape[1] > 1:
         vars = output[:,0]/(output[:,0]+output[:,1])
-        print("Accuracy:",test_accuracy(vars[labels!=1],1-labels[labels!=1]//2))
+        print("Accuracy:",test_accuracy(vars[labels < 2],labels[labels < 2]))
     else:
         vars = output.flatten()
         print(vars.shape)
@@ -315,6 +316,36 @@ def check_disc(itest_data,itest_labels,imodel):
     #plt.hist(vars[labels==2],alpha=0.5)
     plt.show()
 
+def approxDist(iData, iModel, iLabel, nsamps):
+        dists=[]
+        for pVal in iData:
+                pDist=[]
+                for pSamp in range(nsamps):
+                    pModel = iModel[iLabel == pSamp]
+                    ppDist=torch.sqrt(torch.sum((pModel-pVal)**2,axis=1))
+                    pDist.append(ppDist.mean()/ppDist.std())
+                dists.append(torch.min(torch.tensor(pDist)))
+        return torch.tensor(dists)
+
+from torchmetrics.classification import ROC
+def approxAUC(dist, labels,nsamps):
+    metric = AUROC(task="binary")
+    auc_score = metric(dist, labels//(nsamps-1))
+    #test_accuracy = Accuracy(task="binary", num_classes=2)
+    print("AUC:",auc_score)
+    #print("Acc:",test_accuracy(dist., labels//(nsamps-1)))
+    roc = ROC(task="binary")
+    roc.update(dist, labels//(nsamps-1))
+    fpr, tpr, thresholds = roc.compute()
+    plt.plot(fpr.cpu().numpy(), tpr.cpu().numpy(), color='darkorange', label='ROC curve')
+    plt.plot([0, 1], [0, 1], color='navy', linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+    plt.show()
     
 def ResNet50Transform(resnet_type,grayscale=False,from_pil=True):
         assert resnet_type in ['resnet18','resnet50']

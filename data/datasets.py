@@ -193,7 +193,7 @@ class ToyJetDataset(GenericDataModule):
         return loader
 
 class FlatDataset(GenericDataModule):
-    def __init__(self,nsigs,ndisc,num_train,num_val,num_test,nrand=16,
+    def __init__(self,nsigs,ndisc,num_train,num_val,num_test,nrand=16,skip=-1,
                  **kwargs):
         super().__init__(**kwargs)
         self.nsigs  = nsigs
@@ -203,11 +203,30 @@ class FlatDataset(GenericDataModule):
         self.num_val   = num_val
         self.num_test  = num_test
         self.rand_matrix = self.random_rotation_matrix(ndisc+nrand)
+        if skip < 0: 
+            self.skip      = nsigs-1
+        else:
+            self.skip      = skip
         
+        self.mins =[]
+        self.maxs =[]
+        self.peaks=[]
+        self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
+        self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
+        for pSig in range(2,self.nsigs):
+            pMin  = np.random.uniform(0,0.5)
+            pMax  = np.random.uniform(0.5,1.0)
+            pPeak = np.random.uniform(pMin,pMax)
+            self.mins.append(pMin)
+            self.maxs.append(pMax)
+            self.peaks.append(pPeak)
+        print(" Mins:",self.mins,"\n Maxs:",self.maxs,"\n Peaks:",self.peaks)
+
         self.view_generator = dutils.viewGenerator(dutils.smear,2)
         self.train_data, self.train_labels = self.generate(self.num_train)
-        self.train_dataset = dutils.AugmentationDataset(TensorDataset(self.train_data, self.train_labels),self.view_generator)
-        self.train_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
+        self.train_dataset = dutils.AugmentationDataset(TensorDataset(self.train_data[self.train_labels != self.skip], self.train_labels[self.train_labels != self.skip]),self.view_generator)
+        self.train_dataset_basic = dutils.GenericDataset(self.train_data[self.train_labels != self.skip], self.train_labels[self.train_labels != self.skip])
+        self.train_dataset_basic_full = dutils.GenericDataset(self.train_data, self.train_labels)
         
         self.val_data, self.val_labels = self.generate(self.num_val)
         self.val_dataset = dutils.AugmentationDataset(TensorDataset(self.val_data, self.val_labels),self.view_generator)
@@ -241,17 +260,15 @@ class FlatDataset(GenericDataModule):
         data = np.empty((self.nsigs,n,ndim))
         for pVar in range(self.nrand):
             data[:,:,pVar+self.ndisc] = np.random.uniform(0.0,1,(self.nsigs,n))
-        val=0.05
+        shift=0.
         if iData == 1:
-            val=0.2
+            shift=0.1
         for pVar in range(self.ndisc):
-            data[0,:,pVar]=np.random.triangular(0.,1.-val, 1, n)
-            data[1,:,pVar]=np.random.triangular(0, val,    1, n)
-            for pSig in range(2,self.nsigs):
-                pMin  = np.random.uniform(0,0.5,n)
-                pMax  = np.random.uniform(0.5,1.0,n)
-                pPeak = np.random.uniform(pMin,pMax,n) 
-                data[pSig,:,pVar]=np.random.triangular(pMin,pPeak,pMax, n)
+            for pSig in range(self.nsigs):
+                pShift=shift
+                if self.maxs[pSig]-self.peaks[pSig] < shift:
+                    pShift = self.maxs[pSig]-self.peaks[pSig]-0.01
+                data[pSig,:,pVar]=np.random.triangular(self.mins[pSig],self.peaks[pSig]+pShift,self.maxs[pSig], n)
         if iMix:
             m=self.rand_matrix
             m=np.tile(m, (self.nsigs,n, 1,1))
@@ -259,9 +276,9 @@ class FlatDataset(GenericDataModule):
             stmp = np.matmul(dtmp , m)
             data[:,:,:] = stmp[:,:,0,:]
         data = data.reshape(self.nsigs*n,ndim)
-        labels = np.ones((self.nsigs*n,ndim))
+        labels = np.ones((self.nsigs*n))
         for pArr in range(self.nsigs):
-            labels[pArr*self.nsigs:(pArr+1)*self.nsigs] *= pArr
+            labels[pArr*n:(pArr+1)*n] *= pArr
         return torch.tensor(data),torch.tensor(labels)
 
 
