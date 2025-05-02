@@ -9,6 +9,8 @@ from torchvision.datasets import VisionDataset
 from torchvision.transforms import InterpolationMode
 import torchvision.transforms.v2 as v2
 import numpy as np
+from utils.MAHALANOBISutils import compute_empirical_means,compute_empirical_cov_matrix,mahalanobis_test
+from utils.ANALYSISutils import plot_2distribution_new
 
 class viewGenerator:
     """
@@ -418,3 +420,88 @@ class ConcatWithLabels(Dataset):
 
     def __len__(self) -> int:
         return self._len
+
+#def approxDist(iData, iModel, iLabel, nsamps):
+
+
+def mahalanobis_dist(data, ref, ref_label,plot=True):#, sig_label=-1, seed=0, n_ref=1e4, n_bkg=1e3, n_sig=1e2, z_ratio=0.1, anomaly_type ='', plot=True, pois_ON=False):
+    '''
+    - computes the mahalnobis test for the dataset 
+    '''
+    # random seed                                                                                                                    
+    #np.random.seed(seed)
+    #print('Random seed: '+str(seed))
+    
+    # train on GPU?                                                                                                                  
+    cuda = torch.cuda.is_available()
+    DEVICE = torch.device("cuda" if cuda else "cpu")
+    #data   = data.to(DEVICE)
+    #model  = model.to(DEVICE)
+    #label  = label.to(DEVICE)
+
+    # estimate parameters of the bkg model 
+    means=compute_empirical_means(ref,ref_label)
+    emp_cov=compute_empirical_cov_matrix(ref, ref_label, means)
+    M_data = mahalanobis_test(data, means, emp_cov)
+    if plot:
+        M_ref  = mahalanobis_test(ref, means, emp_cov)
+        # visualize mahalanobis
+        fig = plt.figure(figsize=(9,6))
+        fig.patch.set_facecolor('white')
+        ax= fig.add_axes([0.15, 0.1, 0.78, 0.8])
+        plt.hist([M_ref, M_data], density=True, label=['REF', 'DATA'])
+        #font = font_manager.FontProperties(family='serif', size=16)
+        plt.legend(fontsize=18, ncol=2, loc='best')
+        plt.yscale('log')
+        #plt.yticks(fontsize=16, fontname='serif')
+        #plt.xticks(fontsize=16, fontname='serif')
+        plt.ylabel("density")#, fontsize=22, fontname='serif')
+        plt.xlabel("mahalanobis metric")#, fontsize=22, fontname='serif')
+        #plt.savefig(output_folder+'distribution.pdf')
+        plt.show()
+
+    # compute the test as the reduce sum of the mahalanobis distance over the dataset
+    t = -1* torch.sum(M_data)
+    #print('Mahalanobis test: ', "%f"%(t))
+    return t
+
+def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=100):
+    t_sig = []
+    t_ref = []
+    refs      = model       [model_labels != sig_idx]
+    refs_label= model_labels[model_labels != sig_idx]
+    sigs     = data[labels == sig_idx]
+    bkgs     = data[labels != sig_idx]
+
+    ntotsig = len(sigs)
+    ntotbkg = len(bkgs)
+    ntotref = len(refs)
+    
+    nsigs   = np.random.poisson(lam=nsig, size=ntoys)
+    nbkgs   = np.random.poisson(lam=nbkg, size=ntoys)
+    nrefs   = np.random.poisson(lam=nref, size=ntoys)
+    nbrfs   = np.random.poisson(lam=nbkg, size=ntoys)
+    for pToy in range(ntoys):
+        sigidx  = np.random.choice(ntotsig, size=nsigs[pToy], replace=True)
+        bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=True)
+        refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=True)
+        brfidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=True) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
+        sig     = sigs[sigidx]
+        bkg     = bkgs[bkgidx]
+        ref     = refs[refidx]
+        brf     = bkgs[brfidx] # in the long run we change this to ref
+        ref_label=refs_label[refidx]
+        #for pMetric in metrics: #just one for now, otherwise t_sig/t_ref have to be fixed
+        dist    = mahalanobis_dist(torch.cat((sig,bkg)),ref,ref_label,plot=False)
+        ref_dist= mahalanobis_dist(brf,ref,ref_label,plot=False)
+        t_sig.append(dist)
+        t_ref.append(ref_dist)
+
+    ts, tr = np.array(t_sig), np.array(t_ref)
+    z_as, z_emp = plot_2distribution_new(ts, tr, df=np.median(ts), xmin=np.min(tr)-10, xmax=np.max(tr)+10, #ymax=0.03, 
+                       nbins=8, save=False, output_path='./', Z_print=[1.645,2.33],
+                       label1='REF', label2='DATA', save_name='', print_Zscore=True)
+    return z_as,z_emp
+
+#from GENutils import *
+#from ANALYSISutils import *

@@ -252,7 +252,7 @@ class FlatDataset(GenericDataModule):
         D = np.diag(np.sign(np.diag(R)))
         return Q @ D
 
-    def generate(self,n,iData=False,iMix=True):
+    def generate(self,n,iData=False,iMix=False):
         #Generate a clear signal and background using same variables
         #Add some random signals that use same discriminating variables
         #for now, we just do many different traingle distributions
