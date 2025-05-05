@@ -29,7 +29,7 @@ class HueTransform(nn.Module):
     def forward(self,x):
         return v2.functional.adjust_hue(x,self.factor)
     
-CHECKPOINT = '/n/home11/sambt/phlab-neurips25/runs/cifar10_simCLR_ResNet50_T0.5/lightning_logs/o1t4hdp7/checkpoints/epoch=8-step=441.ckpt'
+CHECKPOINT = '/n/home11/sambt/phlab-neurips25/runs/cifar10_simCLR_ResNet50_T0.5/lightning_logs/qdcc0he3/checkpoints/epoch=15-step=1408.ckpt'
 
 model = SimCLRModel.load_from_checkpoint(CHECKPOINT)
 model = model.to(device)
@@ -43,8 +43,9 @@ for i in range(6):
     cifar5m_preds = []
     
     hue_transform = v2.ColorJitter(hue=(-0.2,-0.2))
-    cifar5m_full = CIFAR5MDataset("resnet50",[i],[(None,None)],grayscale=False,custom_pre_transforms=[hue_transform])
-    for ims,labs in tqdm(DataLoader(cifar5m_full,batch_size=1024,shuffle=False)):
+    cifar5m_full = CIFAR5MDataset("resnet50",[i],[(None,None)],exclude_classes=[9],
+                                  grayscale=False,custom_pre_transforms=[hue_transform])
+    for ims,labs in tqdm(DataLoader(cifar5m_full,batch_size=512,shuffle=False)):
         with torch.no_grad():
             cifar5m_embeds.append(model.encoder(ims.to(device)).cpu().numpy())
             cifar5m_labels.append(labs.numpy())

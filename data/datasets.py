@@ -498,7 +498,8 @@ class JetClassDataset(GenericDataModule):
         return loader
     
 class CIFAR10Dataset(GenericDataModule):
-    def __init__(self,resnet_type,grayscale=False,custom_pre_transforms=None,custom_post_transforms=None,**kwargs):
+    def __init__(self,resnet_type,grayscale=False,custom_pre_transforms=None,custom_post_transforms=None,
+                 exclude_classes=[],**kwargs):
         super().__init__(**kwargs)
         self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale,from_pil=True,
                                                   custom_pre_transforms=custom_pre_transforms,
@@ -516,6 +517,20 @@ class CIFAR10Dataset(GenericDataModule):
                                     train=False,
                                     download=False,
                                     transform=self.transform)
+        if len(exclude_classes) > 0:
+            train_mask = np.array([lab not in exclude_classes for lab in self.train_dataset.targets])
+            val_mask = np.array([lab not in exclude_classes for lab in self.val_dataset.targets])
+            test_mask = np.array([lab not in exclude_classes for lab in self.test_dataset.targets])
+            
+            self.train_dataset.targets = list(np.array(self.train_dataset.targets)[train_mask])
+            self.train_dataset.data = self.train_dataset.data[train_mask]
+
+            self.val_dataset.targets = list(np.array(self.val_dataset.targets)[val_mask])
+            self.val_dataset.data = self.val_dataset.data[val_mask]
+
+            self.test_dataset.targets = list(np.array(self.test_dataset.targets)[test_mask])
+            self.test_dataset.data = self.test_dataset.data[test_mask]
+
     def train_dataloader(self):
         loader = DataLoader(self.train_dataset,shuffle=True, **self.loader_kwargs)
         return loader

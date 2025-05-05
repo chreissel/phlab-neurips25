@@ -5,8 +5,8 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as font_manager
-plt.rcParams["font.family"] = "serif"
-plt.style.use('classic')
+#plt.rcParams["font.family"] = "serif"
+#plt.style.use('classic')
 
 def Z_score_chi2(t,df):
     sf = chi2.sf(t, df)

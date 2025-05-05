@@ -39,8 +39,7 @@ class MLP(nn.Module):
         self.network = nn.Sequential(*layers)
             
     def forward(self, x):
-        out = self.network(x)
-        return out
+        return self.network(x)
     
     def forward_ll(self, x):
         out = self.network(x)
@@ -58,7 +57,7 @@ class DeepSetsEncoder(nn.Module):
         return self.f(x)
     
 class CustomResNet(nn.Module):
-    def __init__(self,variant,fc_hidden,fc_out,**kwargs):
+    def __init__(self,variant,fc_hidden,fc_out,freeze=True,**kwargs):
         # loads resnet then replaces the last fc layer with a user-specificed mlp
         # fc_dims specifies the dimensions 
         super().__init__()
@@ -71,8 +70,9 @@ class CustomResNet(nn.Module):
             print(f"Variant {variant} not recognized. Using resnet50")
             self.model = resnet50()
 
-        for param in self.model.parameters():
-            param.requires_grad = False
+        if freeze:
+            for param in self.model.parameters():
+                param.requires_grad = False
 
         dim_resnet = self.model.fc.in_features
         self.model.fc = MLP(dim_resnet,fc_hidden,fc_out,**kwargs)

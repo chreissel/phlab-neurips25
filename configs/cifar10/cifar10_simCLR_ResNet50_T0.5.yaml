@@ -21,8 +21,9 @@ data:
   class_path: data.datasets.CIFAR10Dataset
   init_args:
     resnet_type: 'resnet50'
-    batch_size: 1024
+    batch_size: 512
     num_workers: 2
+    exclude_classes: [9]
 
 optimizer:
   class_path: torch.optim.AdamW
@@ -44,6 +45,7 @@ model:
         variant: resnet50
         fc_hidden: [512,256,128]
         fc_out: 4
+        freeze: false # do not freeze the backbone
     projector:
       class_path: models.networks.MLP
       init_args:
@@ -55,8 +57,8 @@ model:
       init_args:
         input_dim: 4
         hidden_dims: [16,16]
-        output_dim: 10
+        output_dim: 9
     #classifier: null
-    lambda_classifier: 1.0
+    lambda_classifier: 0.5
     temperature: 0.5
     sup_simclr: true
