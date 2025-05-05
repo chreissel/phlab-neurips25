@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/n/home11/sambt/phlab-neurips25/experiments/cifar10/evaluate.py", line 16, in <module>
+    from models.litmodels import SimCLRModel
+  File "/n/home11/sambt/phlab-neurips25/models/litmodels.py", line 162
+    self.
+         ^
+SyntaxError: invalid syntax

@@ -1,16 +1,25 @@
 import torch
 import torch.nn as nn
-from torchvision.models import resnet50, resnet18, efficientnet_b0 
+import numpy as np
+from torchvision.models import resnet50, resnet18, efficientnet_b0
+from torchvision.models import ResNet50_Weights, ResNet18_Weights, ResNet34_Weights, ResNet101_Weights, ResNet152_Weights
 from .resnet_wider import resnet50x1, resnet50x2, resnet50x4
+from .parT import ParticleTransformer
+import yaml
+from .bit_pytorch_models import KNOWN_MODELS
 
 activations = {
     "relu": nn.ReLU(),
     "sigmoid": nn.Sigmoid(),
     "tanh": nn.Tanh(),
+    "elu": nn.ELU(),
+    "leaky_relu": nn.LeakyReLU(),
+    "gelu": nn.GELU(),
+    "tanh": nn.Tanh()
 }
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.0, internal_activation='relu', output_activation=None, input_activation=None):
+    def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.0, activation='relu', output_activation=None, input_activation=None):
         super().__init__()
         layers = []
         if input_activation is not None:
@@ -19,19 +28,32 @@ class MLP(nn.Module):
         
         for hidden_dim in hidden_dims:
             layers.append(nn.Linear(current_dim, hidden_dim))
-            layers.append(activations[internal_activation])
+            layers.append(activations[activation])
             if dropout > 0:
                 layers.append(nn.Dropout(dropout))
             current_dim = hidden_dim
         
-        layers.append(nn.Linear(current_dim, output_dim))
-        if output_activation is not None:
-            layers.append(activations[output_activation])
-        
+        #layers.append(nn.Linear(current_dim, output_dim))
+        #if output_activation is not None:
+        #    layers.append(activations[output_activation])
         self.network = nn.Sequential(*layers)
-    
+        self.last_layer = nn.Linear(current_dim, output_dim)
+        if output_activation is not None:
+            self.activation = activations[output_activation]
+        else:
+            self.activation = None
+            
     def forward(self, x):
-        return self.network(x)
+        out = self.network(x)
+        out = self.last_layer(out)
+        if self.activation is not None:
+            return self.activation(out)
+        return out
+    
+    def forward_ll(self, x):
+        out = self.network(x)
+        return out
+
     
 class DeepSetsEncoder(nn.Module):
     def __init__(self, phi, f):
@@ -45,17 +67,20 @@ class DeepSetsEncoder(nn.Module):
     
 class CustomResNet(nn.Module):
     def __init__(self,variant,fc_hidden,fc_out,**kwargs):
-        # loads resnet50 then replaces the last fc layer with a user-specificed mlp
+        # loads resnet then replaces the last fc layer with a user-specificed mlp
         # fc_dims specifies the dimensions 
         super().__init__()
 
         if variant == 'resnet50':
-            self.model = resnet50()
+            self.model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
         elif variant == 'resnet18':
-            self.model = resnet18()
+            self.model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
         else:
             print(f"Variant {variant} not recognized. Using resnet50")
             self.model = resnet50()
+
+        for param in self.model.parameters():
+            param.requires_grad = False
 
         dim_resnet = self.model.fc.in_features
         self.model.fc = MLP(dim_resnet,fc_hidden,fc_out,**kwargs)
@@ -112,3 +137,22 @@ class CustomEfficientNet(nn.Module):
         return self.model(x)
     
 
+class ParticleTransformerModel(nn.Module):
+    def __init__(self,**kwargs):
+        super().__init__()
+        self.model = ParticleTransformer(**kwargs)
+
+    def forward(self,x):
+        features = x['pf_features'].float()
+        vectors = x['pf_vectors'].float()
+        mask = x['pf_mask'].float()
+        return self.model(features,v=vectors,mask=mask)
+    
+class BiT(nn.Module):
+    def __init__(self,name,path):
+        super().__init__()
+        self.model = KNOWN_MODELS[name](head_size=10, zero_head=True)
+        self.model.load_from(np.load(path))
+
+    def forward(self,x):
+        return self.model(x)
