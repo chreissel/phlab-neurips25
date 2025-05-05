@@ -33,21 +33,13 @@ class MLP(nn.Module):
                 layers.append(nn.Dropout(dropout))
             current_dim = hidden_dim
         
-        #layers.append(nn.Linear(current_dim, output_dim))
-        #if output_activation is not None:
-        #    layers.append(activations[output_activation])
-        self.network = nn.Sequential(*layers)
-        self.last_layer = nn.Linear(current_dim, output_dim)
+        layers.append(nn.Linear(current_dim, output_dim))
         if output_activation is not None:
-            self.activation = activations[output_activation]
-        else:
-            self.activation = None
+            layers.append(activations[output_activation])
+        self.network = nn.Sequential(*layers)
             
     def forward(self, x):
         out = self.network(x)
-        out = self.last_layer(out)
-        if self.activation is not None:
-            return self.activation(out)
         return out
     
     def forward_ll(self, x):
