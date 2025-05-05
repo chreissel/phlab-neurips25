@@ -4,7 +4,10 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 import lightning as pl
 from . import data_utils as dutils
+from . import toy4vec as toy4vec
 from torchvision.transforms import v2
+from torchvision.datasets import Imagenette
+import numpy as np
 from torchvision.datasets import Imagenette, CIFAR10
 from torchvision.models import ResNet50_Weights, ResNet18_Weights
 from .customImagenette import TensorImagenette
@@ -122,7 +125,176 @@ class ImagenetteDataset(GenericDataModule):
         return loader
     
     def test_dataloader(self):
-        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
+        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+
+class ToyJetDataset(GenericDataModule):
+    def __init__(self,npart,num_train,num_val,num_test,nrand=16,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.npart = npart
+        self.nrand = nrand
+        self.num_train = num_train
+        self.num_val   = num_val
+        self.num_test  = num_test
+        self.jdgs     = toy4vec.jet_data_generator("signal",npart, npart, True,nrandparticle=nrand)
+        self.jdgb     = toy4vec.jet_data_generator("background",npart, npart, True,nrandparticle=nrand)
+        self.jdgd     = toy4vec.jet_data_generator("signal_data",npart, npart, True,nrandparticle=nrand)
+        
+        self.view_generator = dutils.viewGenerator(dutils.smearAndRotate(),2)
+        self.train_data, self.train_labels = self.generate_mc(self.num_train)
+        self.train_dataset = dutils.AugmentationDataset(TensorDataset(self.train_data, self.train_labels),self.view_generator)
+        self.train_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
+        
+        self.val_data, self.val_labels = self.generate_mc(self.num_val)
+        self.val_dataset = dutils.AugmentationDataset(TensorDataset(self.val_data, self.val_labels),self.view_generator)
+        self.val_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
+
+        self.test_data, self.test_labels = self.generate_mc(self.num_test)
+        self.test_dataset = TensorDataset(self.test_data, self.test_labels)
+        self.test_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
+
+        self.true_data, self.true_labels = self.generate_data(self.num_test)
+        self.true_dataset = TensorDataset(self.true_data, self.true_labels)
+        self.true_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
+
+        self.trut_data, self.trut_labels = self.generate_data(self.num_test)
+        self.trut_dataset = TensorDataset(self.true_data, self.true_labels)
+        self.trut_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
+
+    def generate_mc(self,n):
+        sig,_,_=self.jdgs.generate_dataset(n)
+        bkg,_,_=self.jdgb.generate_dataset(n)
+        data   = torch.cat((torch.tensor(sig),torch.tensor(bkg)))
+        labels = torch.cat((torch.ones(len(sig)),torch.zeros(len(bkg))))
+        return data,labels
+
+    def generate_data(self,n):
+        sig,_,_=self.jdgd.generate_dataset(n)
+        bkg,_,_=self.jdgb.generate_dataset(n)
+        data   = torch.cat((torch.tensor(sig),torch.tensor(bkg)))
+        labels = torch.cat((torch.ones(len(sig)),torch.zeros(len(bkg))))
+        return data,labels
+    
+    def train_dataloader(self):
+        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, 
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def val_dataloader(self):
+        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def test_dataloader(self):
+        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+
+class FlatDataset(GenericDataModule):
+    def __init__(self,nsigs,ndisc,num_train,num_val,num_test,nrand=16,skip=-1,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.nsigs  = nsigs
+        self.ndisc  = ndisc
+        self.nrand  = nrand
+        self.num_train = num_train
+        self.num_val   = num_val
+        self.num_test  = num_test
+        self.rand_matrix = self.random_rotation_matrix(ndisc+nrand)
+        if skip < 0: 
+            self.skip      = nsigs-1
+        else:
+            self.skip      = skip
+        
+        self.mins =[]
+        self.maxs =[]
+        self.peaks=[]
+        self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
+        self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
+        for pSig in range(2,self.nsigs):
+            pMin  = np.random.uniform(0,0.5)
+            pMax  = np.random.uniform(0.5,1.0)
+            pPeak = np.random.uniform(pMin,pMax)
+            self.mins.append(pMin)
+            self.maxs.append(pMax)
+            self.peaks.append(pPeak)
+        print(" Mins:",self.mins,"\n Maxs:",self.maxs,"\n Peaks:",self.peaks)
+
+        self.view_generator = dutils.viewGenerator(dutils.smear,2)
+        self.train_data, self.train_labels = self.generate(self.num_train)
+        self.train_dataset = dutils.AugmentationDataset(TensorDataset(self.train_data[self.train_labels != self.skip], self.train_labels[self.train_labels != self.skip]),self.view_generator)
+        self.train_dataset_basic = dutils.GenericDataset(self.train_data[self.train_labels != self.skip], self.train_labels[self.train_labels != self.skip])
+        self.train_dataset_basic_full = dutils.GenericDataset(self.train_data, self.train_labels)
+        
+        self.val_data, self.val_labels = self.generate(self.num_val)
+        self.val_dataset = dutils.AugmentationDataset(TensorDataset(self.val_data, self.val_labels),self.view_generator)
+        self.val_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
+
+        self.test_data, self.test_labels = self.generate(self.num_test)
+        self.test_dataset = TensorDataset(self.test_data, self.test_labels)
+        self.test_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
+
+        self.true_data, self.true_labels = self.generate(self.num_test,True)
+        self.true_dataset = TensorDataset(self.true_data, self.true_labels)
+        self.true_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
+
+        self.trut_data, self.trut_labels = self.generate(self.num_test,True)
+        self.trut_dataset = TensorDataset(self.true_data, self.true_labels)
+        self.trut_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
+
+    def random_rotation_matrix(self,dim):
+        # Generate a random orthogonal matrix
+        random_matrix = np.random.randn(dim, dim)
+        Q, R = np.linalg.qr(random_matrix)
+        # Ensure the determinant is 1 to represent a proper rotation
+        D = np.diag(np.sign(np.diag(R)))
+        return Q @ D
+
+    def generate(self,n,iData=False,iMix=False):
+        #Generate a clear signal and background using same variables
+        #Add some random signals that use same discriminating variables
+        #for now, we just do many different traingle distributions
+        ndim = self.ndisc+self.nrand
+        data = np.empty((self.nsigs,n,ndim))
+        for pVar in range(self.nrand):
+            data[:,:,pVar+self.ndisc] = np.random.uniform(0.0,1,(self.nsigs,n))
+        shift=0.
+        if iData == 1:
+            shift=0.1
+        for pVar in range(self.ndisc):
+            for pSig in range(self.nsigs):
+                pShift=shift
+                if self.maxs[pSig]-self.peaks[pSig] < shift:
+                    pShift = self.maxs[pSig]-self.peaks[pSig]-0.01
+                data[pSig,:,pVar]=np.random.triangular(self.mins[pSig],self.peaks[pSig]+pShift,self.maxs[pSig], n)
+        if iMix:
+            m=self.rand_matrix
+            m=np.tile(m, (self.nsigs,n, 1,1))
+            dtmp = np.reshape(data,(self.nsigs,n,1,ndim))
+            stmp = np.matmul(dtmp , m)
+            data[:,:,:] = stmp[:,:,0,:]
+        data = data.reshape(self.nsigs*n,ndim)
+        labels = np.ones((self.nsigs*n))
+        for pArr in range(self.nsigs):
+            labels[pArr*n:(pArr+1)*n] *= pArr
+        return torch.tensor(data),torch.tensor(labels)
+
+
+    def train_dataloader(self):
+        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, 
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def val_dataloader(self):
+        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        return loader
+    
+    def test_dataloader(self):
+        loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers)
         return loader
     
 class NoisyImagenetteDataset(GenericDataModule):
