@@ -7,12 +7,14 @@ from torchvision.transforms import v2
 from tqdm import tqdm
 
 class CIFAR5MDataset(Dataset):
-    def __init__(self,resnet_type,chunks,ranges,grayscale=False,
+    def __init__(self,resnet_type,chunks,ranges,grayscale=False,custom_pre_transforms=None,custom_post_transforms=None,
                  data_dir="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/cifar10_diffusion/",
                  **kwargs):
         super().__init__(**kwargs)
         assert len(chunks) == len(ranges)
-        self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale,from_pil=False)
+        self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale,from_pil=False,
+                                                  custom_pre_transforms=custom_pre_transforms,
+                                                  custom_post_transforms=custom_post_transforms)
         self.data_dir = data_dir
         self.data = []
         self.labels = []

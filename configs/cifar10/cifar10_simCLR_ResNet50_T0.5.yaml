@@ -29,11 +29,11 @@ optimizer:
   init_args:
     lr: 1e-3
 
-lr_scheduler:
-  class_path: torch.optim.lr_scheduler.CosineAnnealingLR
-  init_args:
-    T_max: 100
-    eta_min: 1e-5
+#lr_scheduler:
+#  class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+#  init_args:
+#    T_max: 100
+#    eta_min: 1e-4
 
 model:
   class_path: models.litmodels.SimCLRModel
@@ -50,13 +50,13 @@ model:
         input_dim: 4
         hidden_dims: [4]
         output_dim: 4
-    #classifier:
-    #  class_path: models.networks.MLP
-    #  init_args:
-    #    input_dim: 4
-    #    hidden_dims: [16,16]
-    #    output_dim: 4 # number of classes - for JetClass we use 4 for [qcd, top, w, z]
-    classifier: null
+    classifier:
+      class_path: models.networks.MLP
+      init_args:
+        input_dim: 4
+        hidden_dims: [16,16]
+        output_dim: 10
+    #classifier: null
     lambda_classifier: 1.0
     temperature: 0.5
     sup_simclr: true

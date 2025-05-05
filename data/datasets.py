@@ -325,11 +325,12 @@ class JetClassDataset(GenericDataModule):
         loader = DataLoader(test_dataset,persistent_workers=True,**self.loader_kwargs)
         return loader
     
-
 class CIFAR10Dataset(GenericDataModule):
-    def __init__(self,resnet_type,grayscale=False,**kwargs):
+    def __init__(self,resnet_type,grayscale=False,custom_pre_transforms=None,custom_post_transforms=None,**kwargs):
         super().__init__(**kwargs)
-        self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale)
+        self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale,from_pil=True,
+                                                  custom_pre_transforms=custom_pre_transforms,
+                                                  custom_post_transforms=custom_post_transforms)
 
         self.train_dataset = CIFAR10(root="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/cifar10",
                                     train=True,
@@ -354,3 +355,11 @@ class CIFAR10Dataset(GenericDataModule):
     def test_dataloader(self):
         loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
         return loader
+    
+class MultiDomainDataset(GenericDataModule):
+    def __init__(self,datasets,domain_labels,**kwargs):
+        super().__init__(**kwargs)
+        assert len(datasets) == len(domain_labels)
+        self.datasets = datasets
+        self.domain_labels = domain_labels
+        
