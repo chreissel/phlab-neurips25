@@ -211,20 +211,15 @@ class FlatDataset(GenericDataModule):
         self.mins =[]
         self.maxs =[]
         self.peaks=[]
+        #Do Basic
         self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
         self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
-        for pSig in range(2,self.nsigs):
-            pMin  = np.random.uniform(0,0.5)
-            pMax  = np.random.uniform(0.5,1.0)
-            pPeak = np.random.uniform(pMin,pMax)
-            self.mins.append(pMin)
-            self.maxs.append(pMax)
-            self.peaks.append(pPeak)
-        print(" Mins:",self.mins,"\n Maxs:",self.maxs,"\n Peaks:",self.peaks)
+        #Do assignment
+        self.nvars(self.ndisc,self.nsigs)
 
-        self.view_generator = dutils.viewGenerator(dutils.smear,2)
+        self.view_generator = dutils.viewGenerator(dutils.shift(),2)
         self.train_data, self.train_labels = self.generate(self.num_train)
-        self.train_dataset = dutils.AugmentationDataset(TensorDataset(self.train_data[self.train_labels != self.skip], self.train_labels[self.train_labels != self.skip]),self.view_generator)
+        self.train_dataset = dutils.AugmentationDataset(TensorDataset(self.train_data, self.train_labels),self.view_generator)
         self.train_dataset_basic = dutils.GenericDataset(self.train_data[self.train_labels != self.skip], self.train_labels[self.train_labels != self.skip])
         self.train_dataset_basic_full = dutils.GenericDataset(self.train_data, self.train_labels)
         
@@ -244,6 +239,92 @@ class FlatDataset(GenericDataModule):
         self.trut_dataset = TensorDataset(self.true_data, self.true_labels)
         self.trut_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
 
+    def nvars_rand(self):
+        for pSig in range(2,self.nsigs):
+            pMin  = np.random.uniform(0,0.5)
+            pMax  = np.random.uniform(0.5,1.0)
+            pPeak = np.random.uniform(pMin,pMax)
+            self.mins.append(pMin)
+            self.maxs.append(pMax)
+            self.peaks.append(pPeak)
+        print(" Mins:",self.mins,"\n Maxs:",self.maxs,"\n Peaks:",self.peaks)
+        
+    def nvars(self,iD,iNSigs,iNTries=1000,iSigCut=3., iSigMax=10):
+        #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
+        ntries=0
+        for pSig in range(2,iNSigs):
+            pPass  = False
+            ntries = 0
+            pMin = pMax = pPeak = 0
+            while pPass == False:
+                pMin  = np.random.uniform(0,0.5)
+                pMax  = np.random.uniform(0.5,1.0)
+                pPeak = np.random.uniform(pMin,pMax)
+                tMax = 5
+                for pVal in range(len(self.mins)):
+                    testMax =  self.pairwise_max(iD,[pMin,pMax,pPeak],[self.mins[pVal],self.maxs[pVal],self.peaks[pVal]])
+                    if  tMax > testMax:
+                        tMax = testMax
+            
+                if iSigMax > tMax > iSigCut or ntries > 999:
+                    pPass = True
+                ntries += 1
+            if ntries < 1000:
+                self.mins.append(pMin)
+                self.maxs.append(pMax)
+                self.peaks.append(pPeak)
+            else:
+                print("too many tries, reconfigure",ntries)
+        print("Mins:",self.mins,"\nMaxs:",self.maxs,"\nPeaks:",self.peaks)
+
+    #triangular distribution functions
+    def triangular_pdf(self, x, a, b, c):
+        x = np.asarray(x)
+        pdf = np.zeros_like(x, dtype=float)
+
+        # Rising edge: a <= x < c
+        mask1 = (x >= a) & (x < c)
+        pdf[mask1] = 2 * (x[mask1] - a) / ((b - a) * (c - a))
+
+        # Falling edge: c <= x <= b
+        mask2 = (x >= c) & (x <= b)
+        pdf[mask2] = 2 * (b - x[mask2]) / ((b - a) * (b - c))
+    
+        return pdf
+
+    def triangular_cdf(self, x, a, b, c):
+        x = np.asarray(x)
+        cdf = np.zeros_like(x, dtype=float)
+
+        # Case: a < x <= c
+        mask1 = (x > a) & (x <= c)
+        cdf[mask1] = ((x[mask1] - a) ** 2) / ((b - a) * (c - a))
+
+        # Case: c < x < b
+        mask2 = (x > c) & (x < b)
+        cdf[mask2] = 1 - ((b - x[mask2]) ** 2) / ((b - a) * (b - c))
+
+        # Case: x >= b
+        mask3 = (x >= b)
+        cdf[mask3] = 1.0
+
+        return cdf
+    
+    def triangular_int(self, xmin,xmax,a,b,c):
+        lMin=self.triangular_cdf(xmin,a,b,c)
+        lMax=self.triangular_cdf(xmax,a,b,c)
+        return lMax-lMin
+    
+    def pairwise_max(self, iD,t1=[],t2=[],iNSig=1e2,iNBkg=1e4):
+        xrange=np.linspace(0,1,100)
+        c_val = t1[2]
+        ints1=self.triangular_int(c_val-xrange,c_val+xrange,t1[0],t1[1],t1[2])
+        ints2=self.triangular_int(c_val-xrange,c_val+xrange,t2[0],t2[1],t2[2])
+        vals=ints1[1:-1]*iNSig/np.sqrt(ints2[1:-1]*iNBkg)
+        maxval=(np.max(vals[(vals > 0) & (vals < 1e1)]))**iD
+        #return vals**iD
+        return maxval
+    
     def random_rotation_matrix(self,dim):
         # Generate a random orthogonal matrix
         random_matrix = np.random.randn(dim, dim)
@@ -253,6 +334,7 @@ class FlatDataset(GenericDataModule):
         return Q @ D
 
     def generate(self,n,iData=False,iMix=False):
+        print("Mixing")
         #Generate a clear signal and background using same variables
         #Add some random signals that use same discriminating variables
         #for now, we just do many different traingle distributions

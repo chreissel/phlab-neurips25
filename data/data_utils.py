@@ -11,6 +11,9 @@ import torchvision.transforms.v2 as v2
 import numpy as np
 from utils.MAHALANOBISutils import compute_empirical_means,compute_empirical_cov_matrix,mahalanobis_test
 from utils.ANALYSISutils import plot_2distribution_new
+from scipy.stats import norm
+from scipy import interpolate
+import lmfit
 
 class viewGenerator:
     """
@@ -41,6 +44,9 @@ class AugmentationDataset(Dataset):
         """
         data = self.base_dataset[index]
         return self.view_generator(data[0]), *data[1:]
+
+    def __len__(self):
+        return len(self.base_dataset)
     
 class MultiIter:
     def __init__(self,iterators,fractions):
@@ -198,6 +204,19 @@ class smear:
         aug[:,2] += (torch.randn(4)*0.1/aug[:,0])
         return aug.flatten().float()
 
+class shift:
+    def __call__(self,x):
+        shift=torch.randn()*0.1*torch.ones(x.shape)
+        shift = x+shift
+        return shift.float()
+        # assume x is a tensor of shape D where D is the full dimensionality
+        #aug=x.copy()
+        #print(x.shape)
+        #aug += (torch.randn(x.shape)*0.1)
+        #aug[:,2] += (torch.randn(4)*0.1/aug[:,0])
+        #return x#aug.flatten().float()
+
+    
 class smearAndRotate:
 #    def __init__(self):
 #        self.sme = smear()
@@ -290,6 +309,31 @@ def train_disc(inepochs,itrain,input_dim,last_dim=16,output_dim=3):
     plt.plot(np.arange(len(losses)),losses)
     plt.yscale('log')
     return disc_model
+
+
+def train_aug(inepochs,itrainloader,imodel,icriterion,ioptimizer):
+    losses = []
+    for epoch in tqdm(range(inepochs)):
+        #imodel.train()
+        epoch_loss = []
+        for batch_data, labels in itrainloader:
+            # Potential to add any augmentation here
+            feat0     = imodel(torch.flatten(batch_data[0],start_dim=1)).unsqueeze(1)
+            feat1     = imodel(torch.flatten(batch_data[1],start_dim=1)).unsqueeze(1)
+            feat      = torch.cat((feat0,feat1),axis=1)
+            loss = icriterion(feat)
+            # Backward pass and optimization
+            ioptimizer.zero_grad()
+            loss.backward()
+            ioptimizer.step()
+            epoch_loss.append(loss.item())
+            #print(epoch_loss[-1])
+        mean_loss = np.mean(epoch_loss)
+        losses.append(mean_loss)
+
+    plt.figure(figsize=(8,6))
+    plt.plot(np.arange(len(losses)),losses)
+    #plt.yscale('log')
         
 #DE-SC0021943 #ECA
 #DE-SC001193 #Extra
@@ -424,7 +468,7 @@ class ConcatWithLabels(Dataset):
 #def approxDist(iData, iModel, iLabel, nsamps):
 
 
-def mahalanobis_dist(data, ref, ref_label,plot=True):#, sig_label=-1, seed=0, n_ref=1e4, n_bkg=1e3, n_sig=1e2, z_ratio=0.1, anomaly_type ='', plot=True, pois_ON=False):
+def mahalanobis_dist(data, ref, ref_label,plot=True,fit=False):#, sig_label=-1, seed=0, n_ref=1e4, n_bkg=1e3, n_sig=1e2, z_ratio=0.1, anomaly_type ='', plot=True, pois_ON=False):
     '''
     - computes the mahalnobis test for the dataset 
     '''
@@ -449,21 +493,67 @@ def mahalanobis_dist(data, ref, ref_label,plot=True):#, sig_label=-1, seed=0, n_
         fig = plt.figure(figsize=(9,6))
         fig.patch.set_facecolor('white')
         ax= fig.add_axes([0.15, 0.1, 0.78, 0.8])
-        plt.hist([M_ref, M_data], density=True, label=['REF', 'DATA'])
+        rMin=torch.min(M_ref)
+        rMax=torch.max(M_ref)
+        bins=np.linspace(rMin,rMax,20)
+        plt.hist(M_ref,bins=bins,label='ref',alpha=0.5)
+        plt.hist(M_data,bins=bins,label='data',alpha=0.5)
+        #plt.hist([M_ref, M_data], density=True, label=['REF', 'DATA'])
         #font = font_manager.FontProperties(family='serif', size=16)
         plt.legend(fontsize=18, ncol=2, loc='best')
-        plt.yscale('log')
+        #plt.yscale('log')
         #plt.yticks(fontsize=16, fontname='serif')
         #plt.xticks(fontsize=16, fontname='serif')
         plt.ylabel("density")#, fontsize=22, fontname='serif')
         plt.xlabel("mahalanobis metric")#, fontsize=22, fontname='serif')
         #plt.savefig(output_folder+'distribution.pdf')
         plt.show()
-
+    if fit:
+        M_ref  = mahalanobis_test(ref, means, emp_cov)
+        result=fitDiff(-1.*M_data,-1.*M_ref)
+        
     # compute the test as the reduce sum of the mahalanobis distance over the dataset
     t = -1* torch.sum(M_data)
     #print('Mahalanobis test: ', "%f"%(t))
-    return t
+    return t,-1.*M_data
+
+def gausSpline(x,mean,sigma,a1,a2,iTck=None):
+    sig = norm.pdf(x, mean, sigma)*a1
+    bkg = interpolate.splev(x, iTck)*a2
+    #print(mean,sigma,a1,a2)
+    #print("bkg:",bkg)
+    return sig+bkg
+
+def spline(x,a2,iTck=None):
+    bkg = interpolate.splev(x, iTck)*a2
+    return bkg
+
+def fitDiff(data,ref):
+    #start with binned fit to be easy
+    rMin=torch.min(ref)
+    rMax=torch.max(ref)
+    bins=np.linspace(rMin,rMax,20)
+    refhist,bin_edges  = np.histogram(ref, bins=bins)
+    datahist,_         = np.histogram(data, bins=bins)
+    x                  = 0.5*(bin_edges[1:] + bin_edges[:-1])
+    tck                = interpolate.splrep(x, refhist)
+    smodel             = lmfit.Model(gausSpline)
+    bmodel             = lmfit.Model(spline)
+    ps = smodel.make_params(mean=1,sigma=0.2,a1=100.0,a2=1.0)
+    pb = bmodel.make_params(a2=1.)
+    weights = 1./np.sqrt(np.maximum(refhist,0.1))
+    resultb = bmodel.fit(data=datahist,params=pb,x=x,weights=weights,iTck=tck)
+    lmfit.report_fit(resultb)
+    results = smodel.fit(data=datahist,params=ps,x=x,weights=weights,iTck=tck)
+    lmfit.report_fit(results)
+    #plt.errorbar(x,datahist,yerr=np.sqrt(datahist),marker='o')
+    #plt.errorbar(x,refhist*resultb.params['a2'].value,yerr=np.sqrt(refhist),marker='o')
+    #plt.yscale('log')
+    #plt.show()
+    #return resultb
+    #results.plot()
+    #return resultsb.chisq-results.chisq
+    return results
 
 def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=100):
     t_sig = []

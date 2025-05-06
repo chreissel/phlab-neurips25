@@ -28,5 +28,5 @@ def compute_empirical_cov_matrix(data, labels, means):
 
 def mahalanobis_test(data, means, cov):
     dist_sq  = torch.subtract(data[:, None, :], means[None, :, :])**2 # [n, n', d]
-    dist_sq = -1*torch.sum(dist_sq, dim=2)/cov # [n, n']
+    dist_sq = -1.*torch.sum(dist_sq, dim=2)/cov # [n, n']
     return torch.max(dist_sq, dim=1)[0]
