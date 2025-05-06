@@ -33,22 +33,13 @@ class MLP(nn.Module):
                 layers.append(nn.Dropout(dropout))
             current_dim = hidden_dim
         
-        #layers.append(nn.Linear(current_dim, output_dim))
-        #if output_activation is not None:
-        #    layers.append(activations[output_activation])
-        self.network = nn.Sequential(*layers)
-        self.last_layer = nn.Linear(current_dim, output_dim)
+        layers.append(nn.Linear(current_dim, output_dim))
         if output_activation is not None:
-            self.activation = activations[output_activation]
-        else:
-            self.activation = None
+            layers.append(activations[output_activation])
+        self.network = nn.Sequential(*layers)
             
     def forward(self, x):
-        out = self.network(x)
-        out = self.last_layer(out)
-        if self.activation is not None:
-            return self.activation(out)
-        return out
+        return self.network(x)
     
     def forward_ll(self, x):
         out = self.network(x)
@@ -66,7 +57,7 @@ class DeepSetsEncoder(nn.Module):
         return self.f(x)
     
 class CustomResNet(nn.Module):
-    def __init__(self,variant,fc_hidden,fc_out,**kwargs):
+    def __init__(self,variant,fc_hidden,fc_out,freeze=True,**kwargs):
         # loads resnet then replaces the last fc layer with a user-specificed mlp
         # fc_dims specifies the dimensions 
         super().__init__()
@@ -79,8 +70,9 @@ class CustomResNet(nn.Module):
             print(f"Variant {variant} not recognized. Using resnet50")
             self.model = resnet50()
 
-        for param in self.model.parameters():
-            param.requires_grad = False
+        if freeze:
+            for param in self.model.parameters():
+                param.requires_grad = False
 
         dim_resnet = self.model.fc.in_features
         self.model.fc = MLP(dim_resnet,fc_hidden,fc_out,**kwargs)

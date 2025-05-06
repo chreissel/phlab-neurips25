@@ -393,7 +393,7 @@ def approxAUC(dist, labels,nsamps):
     plt.legend(loc="lower right")
     plt.show()
     
-def ResNet50Transform(resnet_type,grayscale=False,from_pil=True):
+def ResNet50Transform(resnet_type,grayscale=False,from_pil=True,custom_pre_transforms=None,custom_post_transforms=None):
         assert resnet_type in ['resnet18','resnet50']
         if resnet_type == 'resnet50':
             resize_size = 232
@@ -406,40 +406,59 @@ def ResNet50Transform(resnet_type,grayscale=False,from_pil=True):
             resize_size = 232
             crop_size = 224
         
-        transforms = [v2.Resize(resize_size,interpolation=InterpolationMode.BILINEAR,antialias=True),
-                      v2.CenterCrop(crop_size)]    
+        transforms = []
+
         if from_pil:
-            transforms.append(v2.PILToTensor())
-        transforms.append(v2.ToDtype(torch.float32,scale=True))
+            transforms.append(v2.PILToTensor()) # CIFAR10 is stored as PIL; cifar5m is not
+        
+        if custom_pre_transforms is not None: # transforms applied to smaller cifar images before resizing/interpolation
+            assert type(custom_pre_transforms) == list
+            for t in custom_pre_transforms:
+                transforms.append(t)
+            
         if grayscale:
             transforms.append(v2.Grayscale(num_output_channels=3))
-        transforms.append(v2.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]))
+        
+        transforms.append(v2.Resize(resize_size,interpolation=InterpolationMode.BILINEAR,antialias=True)) # standard resnet preprocessing
+        transforms.append(v2.CenterCrop(crop_size)) # standard resnet preprocessing
+
+        if custom_post_transforms is not None:
+            assert type(custom_post_transforms) == list
+            for t in custom_post_transforms:
+                transforms.append(t)
+
+        transforms.append(v2.ToDtype(torch.float32,scale=True)) # standard resnet preprocessing
+        transforms.append(v2.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])) # standard resnet normalization
 
         return v2.Compose(transforms)
 
 class TransformDataset(Dataset):
-    def __init__(self,transform,*args):
+    def __init__(self,transform,data,labels):
         super().__init__()
         self.transform = transform
-        self.dataset = args
+        self.data = data
+        self.labels = labels
     
     def __getitem__(self, index):
-        return self.transform(self.dataset[0][index]), *[d[index] for d in self.dataset[1:]]
+        return self.transform(self.data[index]), self.labels[index]
     
     def __len__(self):
-        return len(self.dataset[0])
+        return len(self.data)
     
     def subset(self,a,b):
-        return TransformDataset(self.transform,*[d[slice(a,b)] for d in self.dataset])
+        return TransformDataset(self.transform,self.data[slice(a,b)],self.labels[slice(a,b)])
     
     def random_split(self,fraction):
-        N = len(self.dataset[0])
+        N = len(self.data)
         indices = np.arange(N)
         np.random.shuffle(indices)
         split = int(fraction*N)
         i1, i2 = indices[:split], indices[split:]
-        return TransformDataset(self.transform,*[d[i1] for d in self.dataset]), \
-               TransformDataset(self.transform,*[d[i2] for d in self.dataset])
+        return TransformDataset(self.transform,self.data[i1],self.labels[i1]), \
+               TransformDataset(self.transform,self.data[i2],self.labels[i2])
+    
+    def subselection(self,selection):
+        return TransformDataset(self.transform,self.data[torch.tensor(selection)],self.labels[np.array(selection)])
     
 class ConcatWithLabels(Dataset):
     def __init__(self, datasets,labels):
