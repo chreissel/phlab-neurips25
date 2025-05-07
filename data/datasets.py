@@ -12,6 +12,7 @@ from torchvision.datasets import Imagenette, CIFAR10
 from torchvision.models import ResNet50_Weights, ResNet18_Weights
 from .customImagenette import TensorImagenette
 import glob
+import scipy.stats as stats
 from .jetclass.dataset import SimpleIterDataset
 
 class GenericDataModule(pl.LightningDataModule):
@@ -196,6 +197,7 @@ class FlatDataset(GenericDataModule):
     def __init__(self,nsigs,ndisc,num_train,num_val,num_test,nrand=16,skip=-1,
                  **kwargs):
         super().__init__(**kwargs)
+        self.triangle = False
         self.nsigs  = nsigs
         self.ndisc  = ndisc
         self.nrand  = nrand
@@ -214,8 +216,15 @@ class FlatDataset(GenericDataModule):
         #Do Basic
         self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
         self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
+        if not self.triangle:
+            self.mins[1] = 1.
+            self.maxs[0] = 0.2
+            self.maxs[1] = 0.2
         #Do assignment
-        self.nvars(self.ndisc,self.nsigs)
+        if self.triangle:
+            self.nvars(self.ndisc,self.nsigs)
+        else:
+            self.nvars_gaus(self.ndisc,self.nsigs)
 
         self.view_generator = dutils.viewGenerator(dutils.shift(),2)
         self.train_data, self.train_labels = self.generate(self.num_train)
@@ -276,7 +285,41 @@ class FlatDataset(GenericDataModule):
             else:
                 print("too many tries, reconfigure",ntries)
         print("Mins:",self.mins,"\nMaxs:",self.maxs,"\nPeaks:",self.peaks)
+        self.choice = []
+        for pVar in range(self.ndisc):
+            self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
+        print("choice",self.choice)
 
+    def nvars_gaus(self,iD,iNSigs,iNTries=1000,iSigCut=3., iSigMax=10):
+        #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
+        ntries=0
+        for pSig in range(2,iNSigs):
+            pPass  = False
+            ntries = 0
+            pMean = pSig = 0
+            while pPass == False:
+                pMean   = np.random.uniform(0.,1.)
+                pSigma  = np.random.uniform(0.,0.5)
+                tMax = 5
+                for pVal in range(len(self.mins)):
+                    testMax =  self.pairwise_max(iD,[pMean,pSigma],[self.mins[pVal],self.maxs[pVal]])
+                    if  tMax > testMax:
+                        tMax = testMax
+            
+                if iSigMax > tMax > iSigCut or ntries > 999:
+                    pPass = True
+                ntries += 1
+            if ntries < 1000:
+                self.mins.append(pMean)
+                self.maxs.append(pSigma)
+            else:
+                print("too many tries, reconfigure",ntries)
+        print("Means:",self.mins,"\nSigmas:",self.maxs)
+        self.choice = []
+        for pVar in range(self.ndisc):
+            self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
+        print("choice",self.choice)
+        
     #triangular distribution functions
     def triangular_pdf(self, x, a, b, c):
         x = np.asarray(x)
@@ -314,12 +357,26 @@ class FlatDataset(GenericDataModule):
         lMin=self.triangular_cdf(xmin,a,b,c)
         lMax=self.triangular_cdf(xmax,a,b,c)
         return lMax-lMin
+
+    def gaus_int(self, xmin,xmax,mean,sigma):
+        lMin=stats.norm.cdf(xmin,loc=mean,scale=sigma)
+        lMax=stats.norm.cdf(xmax,loc=mean,scale=sigma)
+        return lMax-lMin
+
     
     def pairwise_max(self, iD,t1=[],t2=[],iNSig=1e2,iNBkg=1e4):
-        xrange=np.linspace(0,1,100)
-        c_val = t1[2]
-        ints1=self.triangular_int(c_val-xrange,c_val+xrange,t1[0],t1[1],t1[2])
-        ints2=self.triangular_int(c_val-xrange,c_val+xrange,t2[0],t2[1],t2[2])
+        if self.triangle:
+            xrange=np.linspace(0,1,100)
+        else:
+            xrange=np.linspace(-1,3,300)
+        if self.triangle:
+            c_val = t1[2]
+            ints1=self.triangular_int(c_val-xrange,c_val+xrange,t1[0],t1[1],t1[2])
+            ints2=self.triangular_int(c_val-xrange,c_val+xrange,t2[0],t2[1],t2[2])
+        else:
+            c_val = t1[0]
+            ints1=self.gaus_int(c_val-xrange,c_val+xrange,t1[0],t1[1])
+            ints2=self.gaus_int(c_val-xrange,c_val+xrange,t2[0],t2[1])
         vals=ints1[1:-1]*iNSig/np.sqrt(ints2[1:-1]*iNBkg)
         maxval=(np.max(vals[(vals > 0) & (vals < 1e1)]))**iD
         #return vals**iD
@@ -334,7 +391,6 @@ class FlatDataset(GenericDataModule):
         return Q @ D
 
     def generate(self,n,iData=False,iMix=False):
-        print("Mixing")
         #Generate a clear signal and background using same variables
         #Add some random signals that use same discriminating variables
         #for now, we just do many different traingle distributions
@@ -346,11 +402,14 @@ class FlatDataset(GenericDataModule):
         if iData == 1:
             shift=0.1
         for pVar in range(self.ndisc):
-            for pSig in range(self.nsigs):
+            for pSig,pAxis in enumerate(self.choice[pVar]):
                 pShift=shift
-                if self.maxs[pSig]-self.peaks[pSig] < shift:
-                    pShift = self.maxs[pSig]-self.peaks[pSig]-0.01
-                data[pSig,:,pVar]=np.random.triangular(self.mins[pSig],self.peaks[pSig]+pShift,self.maxs[pSig], n)
+                if self.triangle:
+                    if self.maxs[pAxis]-self.peaks[pAxis] < shift:
+                        pShift = self.maxs[pAxis]-self.peaks[pAxis]-0.01
+                    data[pSig,:,pVar]=np.random.triangular(self.mins[pAxis],self.peaks[pAxis]+pShift,self.maxs[pAxis], n)
+                else:
+                    data[pSig,:,pVar]=np.random.normal(loc=self.mins[pAxis]+shift,scale=self.maxs[pAxis], size=n)
         if iMix:
             m=self.rand_matrix
             m=np.tile(m, (self.nsigs,n, 1,1))

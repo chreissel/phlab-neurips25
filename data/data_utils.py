@@ -11,7 +11,7 @@ import torchvision.transforms.v2 as v2
 import numpy as np
 from utils.MAHALANOBISutils import compute_empirical_means,compute_empirical_cov_matrix,mahalanobis_test
 from utils.ANALYSISutils import plot_2distribution_new
-from scipy.stats import norm
+from scipy.stats import norm,chi2
 from scipy import interpolate
 import lmfit
 
@@ -206,7 +206,7 @@ class smear:
 
 class shift:
     def __call__(self,x):
-        shift=torch.randn()*0.1*torch.ones(x.shape)
+        shift=torch.randn(1)*0.1*torch.ones(x.shape)
         shift = x+shift
         return shift.float()
         # assume x is a tensor of shape D where D is the full dimensionality
@@ -487,7 +487,7 @@ class ConcatWithLabels(Dataset):
 #def approxDist(iData, iModel, iLabel, nsamps):
 
 
-def mahalanobis_dist(data, ref, ref_label,plot=True,fit=False):#, sig_label=-1, seed=0, n_ref=1e4, n_bkg=1e3, n_sig=1e2, z_ratio=0.1, anomaly_type ='', plot=True, pois_ON=False):
+def mahalanobis_dist(data, ref, ref_label,plot=True,fit=False,rule='sum'):#, sig_label=-1, seed=0, n_ref=1e4, n_bkg=1e3, n_sig=1e2, z_ratio=0.1, anomaly_type ='', plot=True, pois_ON=False):
     '''
     - computes the mahalnobis test for the dataset 
     '''
@@ -530,9 +530,11 @@ def mahalanobis_dist(data, ref, ref_label,plot=True,fit=False):#, sig_label=-1, 
     if fit:
         M_ref  = mahalanobis_test(ref, means, emp_cov)
         result=fitDiff(-1.*M_data,-1.*M_ref)
-        
-    # compute the test as the reduce sum of the mahalanobis distance over the dataset
-    t = -1* torch.sum(M_data)
+
+    if rule=='sum':
+        t = -1* torch.sum(M_data)
+    elif rule=='max':
+        t = -1* torch.min(M_data)
     #print('Mahalanobis test: ', "%f"%(t))
     return t,-1.*M_data
 
@@ -574,7 +576,38 @@ def fitDiff(data,ref):
     #return resultsb.chisq-results.chisq
     return results
 
-def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=100):
+def zscore(t1,t2,iPrint=False):
+    df=np.median(t2)
+    Z1_obs     = -norm.ppf(chi2.sf(np.median(t1), df))
+    t1_obs_err = 1.2533*np.std(t1)*1./np.sqrt(t1.shape[0])
+    Z1_obs_p   = -norm.ppf(chi2.sf(np.median(t1)+t1_obs_err, df))
+    Z1_obs_m   = -norm.ppf(chi2.sf(np.median(t1)-t1_obs_err, df))
+    if iPrint:
+        print("z1",Z1_obs,"+",Z1_obs_p,"-",Z1_obs_m)
+    
+    Z2_obs     = -norm.ppf(chi2.sf(np.median(t2), df))
+    t2_obs_err = 1.2533*np.std(t2)*1./np.sqrt(t2.shape[0])
+    Z2_obs_p   = -norm.ppf(chi2.sf(np.median(t2)+t2_obs_err, df))
+    Z2_obs_m   = -norm.ppf(chi2.sf(np.median(t2)-t2_obs_err, df))
+    if iPrint:
+        print("z2",Z2_obs,"+",Z2_obs_p,"-",Z2_obs_m)
+    return Z1_obs
+
+def zemp(t1,t2,iPrint=False):
+    t_empirical = np.sum(1.*(t2>np.mean(t1)))*1./t2.shape[0]
+    empirical_lim = '='
+    if t_empirical==0:
+        empirical_lim='>'
+        t_empirical = 1./t1.shape[0]
+    t_empirical_err = t_empirical*np.sqrt(1./np.sum(1.*(t2>np.mean(t1))+1./t1.shape[0]))
+    Z_empirical = norm.ppf(1-t_empirical)
+    Z_empirical_m = norm.ppf(1-(t_empirical+t_empirical_err))
+    Z_empirical_p = norm.ppf(1-(t_empirical-t_empirical_err))
+    if iPrint:
+        print("zemp",Z_empirical,"+",Z_empirical_p,"-",Z_empirical_m,t_empirical,t_empirical_err)
+    return Z_empirical
+    
+def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1000,plot=True):
     t_sig = []
     t_ref = []
     refs      = model       [model_labels != sig_idx]
@@ -601,16 +634,41 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
         brf     = bkgs[brfidx] # in the long run we change this to ref
         ref_label=refs_label[refidx]
         #for pMetric in metrics: #just one for now, otherwise t_sig/t_ref have to be fixed
-        dist    = mahalanobis_dist(torch.cat((sig,bkg)),ref,ref_label,plot=False)
-        ref_dist= mahalanobis_dist(brf,ref,ref_label,plot=False)
+        dist,_    = mahalanobis_dist(torch.cat((sig,bkg)),ref,ref_label,plot=False,fit=False)
+        ref_dist,_= mahalanobis_dist(brf,ref,ref_label,plot=False,fit=False)
         t_sig.append(dist)
         t_ref.append(ref_dist)
 
     ts, tr = np.array(t_sig), np.array(t_ref)
-    z_as, z_emp = plot_2distribution_new(ts, tr, df=np.median(ts), xmin=np.min(tr)-10, xmax=np.max(tr)+10, #ymax=0.03, 
-                       nbins=8, save=False, output_path='./', Z_print=[1.645,2.33],
-                       label1='REF', label2='DATA', save_name='', print_Zscore=True)
+    if plot:
+        bins=np.linspace(np.min(tr)*0.8,np.max(tr)*1.2,20)
+        x   = 0.5*(bins[1:]+bins[:-1])
+        trvals,_ = np.histogram(tr,bins=bins)
+        tsvals,_ = np.histogram(ts,bins=bins)
+        plt.errorbar(x,tsvals/np.sum(tsvals),yerr=np.sqrt(tsvals)/np.sum(tsvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="Sig+bkg")
+        plt.errorbar(x,trvals/np.sum(trvals),yerr=np.sqrt(trvals)/np.sum(trvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="bkg")
+        plt.xlabel("t")
+        plt.show()
+    z_as=zscore(ts,tr,plot)
+    z_emp=zemp(ts,tr,plot)
     return z_as,z_emp
+    #z_as, z_emp = plot_2distribution_new(ts, tr, df=np.median(ts), xmin=np.min(tr)-1, xmax=np.max(tr)+1, #ymax=0.03, 
+    #                   nbins=8, save=False, output_path='./', Z_print=[1.645,2.33],
+    #                   label1='REF', label2='DATA', save_name='', print_Zscore=True)
+    #return z_as,z_emp
 
+def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,iNbins=11,ntoys=1000,plot=True):
+    sig_yield = np.linspace(iMin,iMax,iNbins) + 10
+    z_as=[]; z_emp=[]
+    for pYield in sig_yield: 
+        pZ_as,pZ_emp = run_toy(pYield, iNb, iNr,data,labels,ref,ref_labels,iskip,ntoys=ntoys,plot=False)
+        z_as.append(pZ_as)
+        z_emp.append(pZ_emp)
+
+    if plot:
+        plt.plot(sig_yield,z_as)
+        plt.plot(sig_yield,z_emp)
+        plt.show()
+    return sig_yield,np.max(np.vstack((z_as,z_emp)),axis=0)
 #from GENutils import *
 #from ANALYSISutils import *
