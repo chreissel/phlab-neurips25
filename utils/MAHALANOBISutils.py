@@ -34,7 +34,7 @@ def mahalanobis_test(data, means, cov):
     dist_sq = -1*torch.sum(dist_sq, dim=2)/cov # [n, n']
     return torch.max(dist_sq, dim=1)[0]
 
-def mahalanobis_routine(seed, json_path, calibration=False, rule='sum'):
+def mahalanobis_routine(seed, json_path, calibration=False, rule='max'):
     '''
     generates a toy using seed.
     computes the mahalnobis test for the dataset.

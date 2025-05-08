@@ -624,14 +624,15 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
     nrefs   = np.random.poisson(lam=nref, size=ntoys)
     nbrfs   = np.random.poisson(lam=nbkg, size=ntoys)
     for pToy in range(ntoys):
-        sigidx  = np.random.choice(ntotsig, size=nsigs[pToy], replace=True)
-        bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=True)
-        refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=True)
-        brfidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=True) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
+        sigidx  = np.random.choice(ntotsig, size=nsigs[pToy], replace=False)
+        bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=False)
+        refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=False)
+        brfidx  = np.random.choice(ntotref, size=nbkgs[pToy], replace=False) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
         sig     = sigs[sigidx]
         bkg     = bkgs[bkgidx]
         ref     = refs[refidx]
-        brf     = bkgs[brfidx] # in the long run we change this to ref
+        #brf     = bkgs[brfidx] # in the long run we change this to ref
+        brf     = refs[brfidx] # in the long run we change this to ref
         ref_label=refs_label[refidx]
         #for pMetric in metrics: #just one for now, otherwise t_sig/t_ref have to be fixed
         dist,_    = mahalanobis_dist(torch.cat((sig,bkg)),ref,ref_label,plot=False,fit=False)
@@ -672,3 +673,46 @@ def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,
     return sig_yield,np.max(np.vstack((z_as,z_emp)),axis=0)
 #from GENutils import *
 #from ANALYSISutils import *
+
+def init_weights_to_zero(m):
+    if isinstance(m, (nn.Linear, nn.Conv2d)):
+        nn.init.constant_(m.weight, 0.0)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0.0)
+
+def train_generic_datamc(inepochs,itrainloader,imodel,icriterion,ioptimizer,iCorrectData=False):
+    losses = []
+    for epoch in range(inepochs):#tqdm(range(inepochs)):
+        imodel.train()
+        epoch_loss = []
+        for tmp , labelsd in itrainloader:
+            batch_data,labels = tmp
+            batch_data = batch_data.float()
+            
+            # Potential to add any augmentation here
+            #features       = imodel(batch_data).unsqueeze(1)
+            h              = imodel.encoder(batch_data)
+            #preds          = imodel.classifier(h)
+            if iCorrectData:
+                mc_mask        = (labelsd == 0)
+                data_mask      = (labelsd == 1)
+                shifted        = imodel.shifter(h)
+                h[mc_mask]    += shifted[mc_mask]
+            z              = imodel.projector(h)
+            z              = torch.nn.functional.normalize(z,dim=1).unsqueeze(1) # normalize the projection for simclr loss
+            # Compute SimCLR loss
+            loss = icriterion(z,labels=labels)
+        
+            # Backward pass and optimization
+            ioptimizer.zero_grad()
+            loss.backward()
+            ioptimizer.step()
+        
+            epoch_loss.append(loss.item())
+        mean_loss = np.mean(epoch_loss)
+        losses.append(mean_loss)
+        if epoch % 1 == 0:
+            print(f'Epoch [{epoch+1}/{inepochs}], Loss: {mean_loss:.4f}')
+    
+    plt.figure(figsize=(8,6))
+    plt.plot(np.arange(len(losses)),losses)

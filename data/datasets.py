@@ -14,6 +14,14 @@ from .customImagenette import TensorImagenette
 import glob
 import scipy.stats as stats
 from .jetclass.dataset import SimpleIterDataset
+import matplotlib.pyplot as plt
+from models.losses import SupervisedSimCLRLoss
+#from models.networks import CustomEfficientNet
+from models.networks import MLP
+from models.litmodels import SimCLRModel
+import corner
+import matplotlib.lines as mlines
+
 
 class GenericDataModule(pl.LightningDataModule):
     def __init__(self,batch_size=512,num_workers=4,pin_memory=False):
@@ -234,7 +242,7 @@ class FlatDataset(GenericDataModule):
         
         self.val_data, self.val_labels = self.generate(self.num_val)
         self.val_dataset = dutils.AugmentationDataset(TensorDataset(self.val_data, self.val_labels),self.view_generator)
-        self.val_dataset_basic = dutils.GenericDataset(self.train_data, self.train_labels)
+        self.val_dataset_basic = dutils.GenericDataset(self.val_data[self.val_labels != self.skip], self.val_labels[self.val_labels != self.skip])
 
         self.test_data, self.test_labels = self.generate(self.num_test)
         self.test_dataset = TensorDataset(self.test_data, self.test_labels)
@@ -377,7 +385,7 @@ class FlatDataset(GenericDataModule):
             c_val = t1[0]
             ints1=self.gaus_int(c_val-xrange,c_val+xrange,t1[0],t1[1])
             ints2=self.gaus_int(c_val-xrange,c_val+xrange,t2[0],t2[1])
-        vals=ints1[1:-1]*iNSig/np.sqrt(ints2[1:-1]*iNBkg)
+        vals=ints1[1:-1]*iNSig/np.sqrt(ints2[1:-1]*iNBkg+0.1)
         maxval=(np.max(vals[(vals > 0) & (vals < 1e1)]))**iD
         #return vals**iD
         return maxval
@@ -401,6 +409,7 @@ class FlatDataset(GenericDataModule):
         shift=0.
         if iData == 1:
             shift=0.1
+            #0.1 + 0.01*x
         for pVar in range(self.ndisc):
             for pSig,pAxis in enumerate(self.choice[pVar]):
                 pShift=shift
@@ -409,7 +418,11 @@ class FlatDataset(GenericDataModule):
                         pShift = self.maxs[pAxis]-self.peaks[pAxis]-0.01
                     data[pSig,:,pVar]=np.random.triangular(self.mins[pAxis],self.peaks[pAxis]+pShift,self.maxs[pAxis], n)
                 else:
-                    data[pSig,:,pVar]=np.random.normal(loc=self.mins[pAxis]+shift,scale=self.maxs[pAxis], size=n)
+                    data[pSig,:,pVar]=(np.random.normal(loc=self.mins[pAxis],scale=self.maxs[pAxis], size=n))
+                    if iData: 
+                        def shiftfunc(x):
+                            return x*1.01+0.1
+                        data[pSig,:,pVar]=shiftfunc(data[pSig,:,pVar])
         if iMix:
             m=self.rand_matrix
             m=np.tile(m, (self.nsigs,n, 1,1))
@@ -420,7 +433,7 @@ class FlatDataset(GenericDataModule):
         labels = np.ones((self.nsigs*n))
         for pArr in range(self.nsigs):
             labels[pArr*n:(pArr+1)*n] *= pArr
-        return torch.tensor(data),torch.tensor(labels)
+        return torch.tensor(data).float(),torch.tensor(labels).long()
 
 
     def train_dataloader(self):
@@ -429,7 +442,7 @@ class FlatDataset(GenericDataModule):
         return loader
     
     def val_dataloader(self):
-        loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=True,
+        loader = DataLoader(self.val_dataset_basic, batch_size=self.batch_size, shuffle=True,
                             pin_memory=self.pin_memory, num_workers=self.num_workers)
         return loader
     
@@ -437,7 +450,97 @@ class FlatDataset(GenericDataModule):
         loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False,
                             pin_memory=self.pin_memory, num_workers=self.num_workers)
         return loader
-    
+
+    def plot(self):
+        input_dim  = self.train_data.shape[1]
+        fig, ax = plt.subplots(3, 3, figsize=(20, 20))
+        for var in range(input_dim):
+            if var > 8:
+                continue
+            _,bins,_=ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == self.skip].numpy(),density=True,alpha=0.5,label='skip')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 0].numpy(),density=True,alpha=0.5,bins=bins,label='1')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 1].numpy(),density=True,alpha=0.5,bins=bins,label='2')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 2].numpy(),density=True,alpha=0.5,bins=bins,label='3')
+            ax[var//3,var % 3].set_xlabel("var "+str(var))
+            ax[var//3,var % 3].legend()
+
+        #fig, ax = plt.subplots(3, 3, figsize=(20, 20))
+        #for var in range(input_dim):
+        #    if var > 8:
+        #        continue
+        #    _,bins,_=ax[var//3,var % 3].hist(self.true_data[:,var][self.true_labels == self.skip].numpy(),density=True,alpha=0.5,label='skip')
+        #    ax[var//3,var % 3].hist(self.true_data[:,var][self.true_labels == 0].numpy(),density=True,alpha=0.5,bins=bins,label='1')
+        #    ax[var//3,var % 3].hist(self.true_data[:,var][self.true_labels == 1].numpy(),density=True,alpha=0.5,bins=bins,label='2')
+        #    ax[var//3,var % 3].hist(self.true_data[:,var][self.true_labels == 2].numpy(),density=True,alpha=0.5,bins=bins,label='3')
+        #    ax[var//3,var % 3].set_xlabel("var "+str(var))
+        #    ax[var//3,var % 3].legend()
+
+    def cornerQuick(self,output,output1,labels,labels1):
+        fig = plt.figure(figsize=(8,8))
+        corner.corner(output[labels==0].numpy(),fig=fig,color="C0", label='background')
+        corner.corner(output[labels==1].numpy(),fig=fig,color="C1", label='signal 1')
+        corner.corner(output[labels==2].numpy(),fig=fig,color="C2", label='signal 2')
+        corner.corner(output[labels==3].numpy(),fig=fig,color="C3", label='signal 3')
+        corner.corner(output1[labels1==0].numpy(),fig=fig,color="C0", label='data background',linestyle="dashed")
+        corner.corner(output1[labels1==1].numpy(),fig=fig,color="C1", label='data signal 1',linestyle="dashed")
+        corner.corner(output1[labels1==2].numpy(),fig=fig,color="C2", label='data signal 2',linestyle="dashed")
+        corner.corner(output1[labels1==3].numpy(),fig=fig,color="C3", label='data signal 3',linestyle="dashed")
+        plt.legend(
+            handles=[
+                mlines.Line2D([], [], color="C0", label='background'),
+                mlines.Line2D([], [], color="C1", label='signal 1'),
+                mlines.Line2D([], [], color="C2", label='signal 2'),
+                mlines.Line2D([], [], color="C3", label='signal 3'),
+            ],bbox_to_anchor=(1, 3),frameon=False, loc="upper right"
+            )
+        plt.show()
+
+    def zscoreplot(self,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,intoys=50,plot=True):
+        xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
+        xy1d,zscore1d=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
+        xy2,zscore2=dutils.z_yield  (mc_raw,mc_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
+        xy2d,zscore2d=dutils.z_yield(da_raw,da_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
+
+        if plot:
+            plt.plot(xy1,zscore1,c='red',label="trained")
+            plt.plot(xy2,zscore2,c='blue',label="raw")
+            plt.plot(xy1d,zscore1d,c='red',linestyle='dashed',label="trained(data)")
+            plt.plot(xy2d,zscore2d,c='blue',linestyle='dashed',label="raw(data)")
+            plt.xlabel("yield")
+            plt.ylabel("z-score")
+            plt.legend()
+            plt.show()
+
+
+    def trainQuick(self,embed_dim=4,hidden_dims=[128,64,32,16],num_epochs=10,batch_size=1000,plot=True,temp=0.01):
+        #now contrastive model
+        #embed_dim  = 4 #not making it smaller than input space        input_dim  = self.train_data.shape[1]
+        input_dim  = self.train_data.shape[1]
+        embedder   = MLP(input_dim=input_dim,hidden_dims=hidden_dims,output_dim=embed_dim,output_activation="sigmoid",dropout=0.1)#.to(device)
+        projector  = MLP(input_dim=embed_dim,hidden_dims=[embed_dim],output_dim=embed_dim)
+        classifier = MLP(input_dim=embed_dim,hidden_dims=[16,16],output_dim=(self.nsigs-1))
+        shifter    = MLP(input_dim=embed_dim,hidden_dims=[32,32,16],output_dim=embed_dim,activation='relu')
+        self.model = SimCLRModel(embedder, projector,classifier=classifier,shifter=shifter,lambda_classifier=0.5,temperature=temp,sup_simclr=True)
+        #optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.5e-3)
+        # Dataloaders
+        trainloader = torch.utils.data.DataLoader(self.train_dataset_basic, batch_size=batch_size, shuffle=True)
+        #dutils.train_generic(num_epochs,trainloader,self.model,criterion,optimizer)
+        trainer = pl.Trainer(max_epochs=num_epochs)
+        trainer.fit(model=self.model, train_dataloaders=trainloader, val_dataloaders=self.val_dataloader());
+        mc_lab =self.test_labels.int()
+        da_lab=self.true_labels.int()
+        with torch.no_grad():
+            output_train  = (self.model(self.train_data.float(),embed=True))
+            mc_out  = (self.model(self.test_data.float(),embed=True))
+            da_out  = (self.model(self.true_data.float(),embed=True))
+
+        if plot:
+            self.cornerQuick(mc_out,da_out,mc_lab,da_lab)
+            self.zscoreplot(mc_out,da_out,mc_lab,da_lab,self.test_data,self.true_data)
+
+        return self.model,output_train,da_out 
+
+        
 class NoisyImagenetteDataset(GenericDataModule):
     def __init__(self,image_width,eps=0.2,p=0.5,sup_simclr=False,**kwargs):
         super().__init__(**kwargs)
