@@ -674,12 +674,6 @@ def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,
 #from GENutils import *
 #from ANALYSISutils import *
 
-def init_weights_to_zero(m):
-    if isinstance(m, (nn.Linear, nn.Conv2d)):
-        nn.init.constant_(m.weight, 0.0)
-        if m.bias is not None:
-            nn.init.constant_(m.bias, 0.0)
-
 def train_generic_datamc(inepochs,itrainloader,imodel,icriterion,ioptimizer,iCorrectData=False):
     losses = []
     for epoch in range(inepochs):#tqdm(range(inepochs)):
