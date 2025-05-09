@@ -4,3 +4,5 @@
 **/*.pt
 **/*.npy
 **/*.npz
+runs/*
+slurm_logs/*
