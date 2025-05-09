@@ -1,18 +1,21 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from torch.utils.data import Dataset, DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset, random_split
 import lightning as pl
 from . import data_utils as dutils
-from . import toy4vec as toy4vec
+#from . import toy4vec as toy4vec
 from torchvision.transforms import v2
 from torchvision.datasets import Imagenette
 import numpy as np
 from torchvision.datasets import Imagenette, CIFAR10
 from torchvision.models import ResNet50_Weights, ResNet18_Weights
+from torchvision import transforms
 from .customImagenette import TensorImagenette
 import glob
-from .jetclass.dataset import SimpleIterDataset
+#from .jetclass.dataset import SimpleIterDataset
+from .histology import HistImagesDataset
+from .gwak import GwakDataset
 
 class GenericDataModule(pl.LightningDataModule):
     def __init__(self,batch_size=512,num_workers=4,pin_memory=False):
@@ -534,4 +537,58 @@ class MultiDomainDataset(GenericDataModule):
         assert len(datasets) == len(domain_labels)
         self.datasets = datasets
         self.domain_labels = domain_labels
-        
+
+class Histology(GenericDataModule):
+    def __init__(self,path='/n/home11/nswood/anomaly-detection-in-histology/data/train/',staining='mt',n_class=10000,**kwargs):
+        super().__init__(**kwargs)
+        tr_normalize = transforms.Normalize(mean=(0.5788, 0.3551, 0.5655), std=(1, 1, 1))
+        self.transforms_seq = transforms.Compose([transforms.ToTensor(), tr_normalize])
+
+        path_to_tissues = (
+            {'folder': path+staining+'_mouse_brain', 'label': 'brain', 'ext': 'png'},
+            {'folder': path+staining+'_mouse_heart', 'label': 'heart', 'ext': 'png'},
+            {'folder': path+staining+'_mouse_kidney', 'label': 'kidney', 'ext': 'png'},
+            {'folder': path+staining+'_mouse_liver', 'label': 'liver', 'ext': 'png'},
+            {'folder': path+staining+'_mouse_lung', 'label': 'lung', 'ext': 'png'},
+            {'folder': path+staining+'_mouse_pancreas', 'label': 'pancreas', 'ext': 'png'},
+            {'folder': path+staining+'_mouse_spleen', 'label': 'spleen', 'ext': 'png'},
+            {'folder': path+staining+'_rat_liver', 'label': 'liver_rat', 'ext': 'png'},
+        )
+
+        dataset = HistImagesDataset(*path_to_tissues, n_samples=n_class, transform=self.transforms_seq)
+
+        generator = torch.Generator().manual_seed(42)
+        self.train_dataset, self.val_dataset, self.test_dataset = random_split(dataset, [0.8,0.1,0.1], generator=generator)
+
+    def train_dataloader(self):
+        loader = DataLoader(self.train_dataset,shuffle=True, **self.loader_kwargs)
+        return loader
+
+    def val_dataloader(self):
+        loader = DataLoader(self.val_dataset, shuffle=False, **self.loader_kwargs)
+        return loader
+
+    def test_dataloader(self):
+        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
+        return loader
+
+class GwakDataloader(GenericDataModule):
+    def __init__(self,path='/n/holystore01/LABS/iaifi_lab/Lab/phlab-neurips25/GWAK/', era='a', anomaly_index=7, remove_anomaly=True, normalize=True, **kwargs):
+        super().__init__(**kwargs)
+
+        dataset = GwakDataset(path=path, era=era, anomaly_index=anomaly_index, remove_anomaly=remove_anomaly, normalize=normalize)
+        generator = torch.Generator().manual_seed(42)
+        self.train_dataset, self.val_dataset, self.test_dataset = random_split(dataset, [0.8,0.1,0.1], generator=generator)
+
+    def train_dataloader(self):
+        loader = DataLoader(self.train_dataset,shuffle=True, **self.loader_kwargs)
+        return loader
+
+    def val_dataloader(self):
+        loader = DataLoader(self.val_dataset, shuffle=False, **self.loader_kwargs)
+        return loader
+
+    def test_dataloader(self):
+        loader = DataLoader(self.test_dataset, shuffle=False, **self.loader_kwargs)
+        return loader
+
