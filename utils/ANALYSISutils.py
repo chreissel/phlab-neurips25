@@ -6,7 +6,12 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as font_manager
 plt.rcParams["font.family"] = "serif"
-plt.style.use('classic')
+#plt.style.use('classic')
+
+def create_config_file(config_table, OUTPUT_DIRECTORY):
+    with open('%s/config.json'%(OUTPUT_DIRECTORY), 'w') as outfile:
+        json.dump(config_table, outfile, indent=4)
+    return '%s/config.json'%(OUTPUT_DIRECTORY)
 
 def Z_score_chi2(t,df):
     sf = chi2.sf(t, df)
@@ -280,7 +285,7 @@ def plot_2distribution_new(t1, t2, df, xmin=0, xmax=300, ymax=None, nbins=10, Z_
     print(Z_list_emp, power_list_emp, err_list_emp)
     string_emp = ''
     for Z, pow, err in zip(Z_list_emp, power_list_emp, err_list_emp):
-        string_emp+= r' P(Z>%s)=$%s^{+%s}_{-%s}$'%(str(int(Z)), 
+        string_emp+= r' P(Z>%s)=$%s^{+%s}_{-%s}$'%(str(np.around(Z,2)), 
                                                    str(np.around(pow,3)), 
                                                    str(np.around(err[0],2)), 
                                                    str(np.around(err[1],2)))
@@ -288,7 +293,7 @@ def plot_2distribution_new(t1, t2, df, xmin=0, xmax=300, ymax=None, nbins=10, Z_
 
     string_asymp = ''
     for Z, pow, err in zip(Z_list_asymp, power_list_asymp, err_list_asymp):
-        string_asymp+= r' P(Z>%s)=$%s^{+%s}_{-%s}$'%(str(int(Z)),
+        string_asymp+= r' P(Z>%s)=$%s^{+%s}_{-%s}$'%(str(np.around(Z,2)), 
                                                      str(np.around(pow,3)), 
                                                      str(np.around(err[0],2)), 
                                                      str(np.around(err[1],2)))

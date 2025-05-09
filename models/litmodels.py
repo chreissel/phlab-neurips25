@@ -10,24 +10,44 @@ from PIL import Image
 from .losses import SupervisedSimCLRLoss
 import sys
 from utils.plotting import make_corner
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class SimCLRModel(pl.LightningModule):
     def __init__(self, encoder, projector, temperature=0.1, sup_simclr=False,
-                 classifier=None, lambda_classifier=1.0, pretrain_ckpt=None, **kwargs):
+                 classifier=None, shifter=None, lambda_classifier=1.0, pretrain_ckpt=None, **kwargs):
         super().__init__()
         self.encoder = encoder
         self.projector = projector
         self.simclr_criterion = SupervisedSimCLRLoss(temperature=temperature)
         self.sup_simclr = sup_simclr
         self.classifier = classifier
+        self.shifter    = shifter
         self.lambda_classifier = lambda_classifier
         self.val_outputs = []
         #print(self.encoder)
+        self.shifter.apply(self.init_weights_to_zero)
 
         if pretrain_ckpt is not None:
             self.load_state_dict(torch.load(pretrain_ckpt)['state_dict'])
         self.save_hyperparameters()
 
+    def init_weights_to_zero(self,m):
+        if isinstance(m, (nn.Linear, nn.Conv2d)):
+            nn.init.constant_(m.weight, 0.0)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0.0)
+
+        
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2)
+        scheduler = CosineAnnealingLR(optimizer, T_max=10)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+            },
+        }
+    
     def embed(self,x):
         return self.encoder(x)
     
@@ -101,7 +121,8 @@ class SimCLRModel(pl.LightningModule):
                     prog_bar=True)
 
         return loss
-    
+
+
     def on_validation_epoch_end(self):
         if self.sup_simclr:
             preds = np.concatenate([o[1] for o in self.val_outputs],axis=0)
@@ -110,13 +131,13 @@ class SimCLRModel(pl.LightningModule):
             buf = BytesIO()
             fig.savefig(buf,format='jpg',dpi=200)
             buf.seek(0)
-            self.logger.log_image(
-                'val/space',
-                [Image.open(buf)],
-            )
+            #self.logger.log_image(
+            #    'val/space',
+            #    [Image.open(buf)],
+            #)
             plt.close(fig)
             self.val_outputs.clear()
-
+            
 class JetClassSimCLRModel(SimCLRModel):
     """
     Need special treatment for jetclass because we're repurposing the dataloader/data config structure from weaver,
